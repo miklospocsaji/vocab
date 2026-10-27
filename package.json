@@ -7,7 +7,7 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "typecheck": "pnpm -r --if-present typecheck",
+    "typecheck": "tsc -p . && pnpm -r --if-present typecheck",
     "lint": "eslint .",
     "test": "vitest run",
     "spec:validate": "openspec validate --all --strict --no-interactive",

@@ -2,3 +2,5 @@ packages:
   - app/*
   - factory/*
   - infra
+
+engineStrict: true

@@ -41,7 +41,7 @@ The anonymiser SHALL shift every timestamp by one constant offset, so that the e
 - **THEN** their output lookups are 90 seconds apart
 
 ### Requirement: Older snapshot for re-import tests
-Given a cutoff, the anonymiser SHALL also produce an older snapshot. The snapshot contains only the lookups at or before the cutoff and the words and books they reference, and SHALL be a subset of the full output.
+Given a share of lookups, the anonymiser SHALL also produce an older snapshot cut at the timestamp of the lookup at that rank. The snapshot contains only the lookups at or before that cutoff and the words and books they reference, and SHALL be a subset of the full output.
 
 #### Scenario: Older snapshot is a subset
 - **WHEN** the anonymiser produces a full output and an older snapshot
@@ -55,11 +55,11 @@ Running the anonymiser twice with the same input and options SHALL produce outpu
 - **THEN** the SQL dumps of the two outputs are identical
 
 ### Requirement: Committed fixtures are anonymised
-The committed fixtures SHALL contain no Kindle content ids (values starting with `CR!`), no ASIN-shaped values, and no non-empty profile ids. The repository SHALL NOT track the owner's original `vocab.db`.
+In the committed fixtures, every book id, GUID, ASIN and dictionary id SHALL be a `fixture-` placeholder or empty, no value SHALL start with `CR!`, and every profile id SHALL be a placeholder or empty. The repository SHALL NOT track the owner's original `vocab.db`.
 
 #### Scenario: Committed fixtures pass the identifier scan
-- **WHEN** the test suite scans every text value in `app/fixtures/vocab.db` and `app/fixtures/vocab-older.db`
-- **THEN** no value starts with `CR!` or matches the ASIN pattern `B0[0-9A-Z]{8}`, and every profile id is empty or null
+- **WHEN** the test suite scans `app/fixtures/vocab.db` and `app/fixtures/vocab-older.db`
+- **THEN** every `BOOK_INFO.id`, `guid` and `asin`, every `DICT_INFO.id` and `asin`, every `LOOKUPS.book_key` and `dict_key`, and the book part of every `LOOKUPS.id` is empty or starts with `fixture-`; no text value starts with `CR!`; and every profile id is empty, null or `fixture-profile`
 
 #### Scenario: Original file is ignored
 - **WHEN** git checks whether `docs/vocab.db` is ignored

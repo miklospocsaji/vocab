@@ -1,0 +1,9 @@
+{
+  "name": "@vocab/fixtures",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "anonymise": "node scripts/anonymise-vocab-db.ts"
+  }
+}

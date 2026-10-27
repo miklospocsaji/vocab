@@ -9,5 +9,5 @@
 
 ## 2. Anonymiser
 
-- [ ] 2.1 `app/fixtures/scripts/anonymise-vocab-db.ts` with options `--in`, `--out`, `--older-out`, `--book <id>` (repeatable), `--cutoff`; runs with plain `node`
+- [ ] 2.1 `app/fixtures/scripts/anonymise-vocab-db.ts` with options `--in`, `--out`, `--older-out`, `--book <title>` (repeatable; titles, because ids are what we hide) and `--older-fraction` (the share of lookups, by time, that go into the older snapshot); runs with plain `node`
 - [ ] 2.2 Generate `app/fixtures/vocab.db` and `app/fixtures/vocab-older.db` from the owner's file with the owner-selected books; document the exact command in `app/fixtures/README.md`
