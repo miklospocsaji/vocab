@@ -2,7 +2,7 @@
 
 Oct 25, 2026 · @Miki
 
-## Purpose and how to use this brief
+## 1. Purpose and how to use this brief
 
 We are building an autonomous software factory first and a vocabulary app second. The app (section 6) is the factory's first workload. The factory is the thing being learned, measured and improved.
 
@@ -23,7 +23,7 @@ We are building an autonomous software factory first and a vocabulary app second
 6. Keep `CLAUDE.md` short and current: build/test commands, repo map, conventions. Put role-specific knowledge in skills and agent definitions, not in `CLAUDE.md`.
 7. Never put secrets in the repo, prompts or logs.
 
-## Guiding principles
+## 2. Guiding principles
 
 The factory is a deterministic program that calls agents for judgement work; agents never control the flow.
 
@@ -38,11 +38,11 @@ The factory is a deterministic program that calls agents for judgement work; age
 9. **Behaviour lives in the repo.** Role prompts, skills, agent definitions, hooks and evals are versioned files, changed through merge requests like code.
 10. **Cheapest model that passes.** Default to Haiku or Sonnet; reserve Opus for spec and architecture. Model choice per role is configuration, not code.
 
-## Target architecture
+## 3. Target architecture
 
 A GitHub issue labelled `factory` starts a Step Functions execution that walks one work item from intake to release, calling agent roles as Fargate tasks.
 
-&#91;embedded content: work-item flow · 11 states, 3 decision points, per-task build loop\]
+Flow (11 states, 3 decision points, per-task build loop): Intake → Proposal → Proposal approval → Design → Design review → Plan → Build loop (per task: tests → code → gates) → Review → Preview + QA → Acceptance → Release. The decision points are complexity routing after Proposal approval, the gate result inside the build loop, and the review verdict.
 
 Inside the build loop a failing gate goes to the classifier: bugs retry the task, design flaws send the change back to Design, and spec ambiguity or infrastructure problems escalate to the owner.
 
@@ -52,13 +52,13 @@ Inside the build loop a failing gate goes to the classifier: bugs retry the task
 | --- | --- | --- |
 | Forge adapter | Read issues, post comments, open and merge PRs, receive webhooks | GitHub App + `@octokit`, behind a `Forge` interface |
 | Intake | Turn a webhook into a work item and start an execution | API Gateway + Lambda |
-| Orchestrator | The work-item state machine: order, retries, waits, budgets, the per-task loop | Step Functions (Standard), defined in CDK |
+| Orchestrator | The work-item state machine: order, retries, waits, budgets, the per-task loop | Step Functions (Standard, JSONata), defined in CDK; states pass S3 pointers, never artifacts (256 KB payload limit) |
 | Factory worker | One container image that runs any role | Node + Agent SDK + OpenSpec CLI + git + Playwright, on ECS Fargate |
 | Role runner | Loads role config, runs the agent, validates the output | TypeScript in `factory/roles/` |
 | Spec tooling | Validate and archive OpenSpec changes | `openspec` CLI, called by the deterministic runner |
 | Gates | Typecheck, lint, unit, e2e, contract checks, `openspec validate`, scenario coverage | Deterministic scripts run in the worker, never by an agent |
 | Deployer | Per-PR preview stack, production release | CDK deploy, deterministic |
-| Ledger | Work items, attempts, artifacts, costs, events | Postgres (Aurora Serverless v2) or DynamoDB; JSON results in S3 |
+| Ledger | Work items, attempts, artifacts, costs, events | Postgres on a dedicated Aurora Serverless v2 cluster with auto-pause, separate from the app's; JSON results in S3 |
 | Approvals | Pause for owner decisions and resume | Step Functions `waitForTaskToken`, resumed by a PR/issue comment command |
 | Console | One page per work item: state, tasks, attempts, cost, links | Small read-only web page over the ledger (milestone 6) |
 | Secrets | Model key, GitHub App key | AWS Secrets Manager, injected per task |
@@ -66,7 +66,7 @@ Inside the build loop a failing gate goes to the classifier: bugs retry the task
 ### Work-item states
 
 1. **Intake:** check the issue states a requirement; create the ledger row and a verb-led OpenSpec change id (for example `add-vocab-import`), which is also the branch name.
-2. **Proposal:** the proposal author writes `proposal.md` (why, what, impact) and delta specs (requirements with WHEN/THEN scenarios) under `openspec/changes/<id>/`, and tags the change `small`, `medium` or `large`. Open questions go to the owner as an issue comment. `openspec validate <id> --strict` must pass.
+2. **Proposal:** the proposal author writes `proposal.md` (why, what, impact) and delta specs (requirements with WHEN/THEN scenarios) under `openspec/changes/<id>/`, and tags the change `small`, `medium` or `large` as `x-complexity` in the change's `.openspec.yaml` (strict validation rejects unprefixed custom keys). Open questions go to the owner as an issue comment. `openspec validate <id> --strict` must pass.
 3. **Proposal approval (human):** the owner replies `/approve` or edits the files on the branch.
 4. **Design:** the architect writes `design.md` (components, data model, decisions, risks) and the code contracts in `app/contracts/`. Skipped for `small` changes.
 5. **Design review:** `large` changes wait for owner approval, `medium` changes get a fresh-context design-reviewer agent, `small` changes skip it.
@@ -85,10 +85,11 @@ OpenSpec is the format for intent, design and tasks, so the owner can read, edit
 
 ```
 openspec/
-├── …                                  # project conventions, created by `openspec init`
+├── config.yaml                        # project conventions (context + per-artifact rules), created by `openspec init`
 ├── specs/<capability>/spec.md         # source of truth: current requirements and scenarios
 └── changes/
     ├── <change-id>/
+    │   ├── .openspec.yaml             # change metadata: schema, created, goal, x-complexity
     │   ├── proposal.md                # why, what, impact
     │   ├── specs/<capability>/spec.md # delta: ADDED / MODIFIED / REMOVED / RENAMED requirements
     │   ├── design.md                  # how; omitted for small changes
@@ -96,7 +97,11 @@ openspec/
     └── archive/YYYY-MM-DD-<change-id>/
 ```
 
-The scenarios in the delta specs are the acceptance criteria. Each test names the scenario it proves, and a gate checks that every scenario in the change has at least one test.
+The scenarios in the delta specs are the acceptance criteria. Each test names the scenario it proves by putting the exact scenario title in its test name (for example `it("Scenario: Re-import adds only new lookups", …)`), and a gate checks that every scenario in the change has at least one test. Scenario titles are unique within a change.
+
+`openspec validate --strict` requires every change to contain at least one delta. A change that touches no requirements (pure tooling, refactor, docs) sets `skip_specs: true` in its `.openspec.yaml`.
+
+Factory capabilities are built through OpenSpec changes too, scoped per milestone. A change holds only what its milestone builds and is archived when that milestone exits, so `openspec/specs/` never describes behaviour that does not exist yet.
 
 Results OpenSpec has no place for are small JSON artifacts with zod schemas in `factory/artifacts/`, stored in S3 by work item and attempt. They never go in the change folder.
 
@@ -112,64 +117,92 @@ Results OpenSpec has no place for are small JSON artifacts with zod schemas in `
 | `qa-report.json` + screenshots | QA explorer | Owner, orchestrator |
 | `retro.md` | Retro | Factory improvement PRs |
 
-## Role catalog
+## 4. Role catalog
 
-Ten agent roles, each defined by one config file in `factory/roles/<role>.yaml` plus a prompt in `.claude/agents/<role>.md`. Models are starting defaults; tune them from benchmark results.
+Ten roles, each defined by one config file in `factory/roles/<role>.yaml` plus a prompt in `.claude/agents/<role>.md`. Nine run as Agent SDK sessions; the failure classifier is a single Messages API call (`@anthropic-ai/sdk`) driven by the same config. Models are starting defaults; tune them from benchmark results.
 
 | Role | Default model | Tools | May write | Output | Turn cap |
 | --- | --- | --- | --- | --- | --- |
-| Proposal author | `claude-opus-5-5` | Read, Grep, Glob, WebFetch, Bash (`openspec` only) | `openspec/changes/<id>/` except `design.md` and `tasks.md` | `proposal.md`, delta specs, complexity tag | 30 |
+| Proposal author | `claude-opus-5-5` | Read, Grep, Glob, Edit, Write, WebFetch, Bash (`openspec` only) | `openspec/changes/<id>/` except `design.md` and `tasks.md` | `proposal.md`, delta specs, `x-complexity` tag | 30 |
 | Architect | `claude-opus-5-5` | Read, Grep, Glob, Edit, Write | `openspec/changes/<id>/design.md`, `app/contracts/` | `design.md`, contracts | 40 |
 | Design reviewer | `claude-sonnet-5-5` | Read, Grep, Glob | nothing | `review.json` | 20 |
 | Planner | `claude-sonnet-5-5` | Read, Grep, Glob, Edit, Write | `openspec/changes/<id>/tasks.md` | `tasks.md`, `tasks.json` | 25 |
 | Test author | `claude-sonnet-5-5` | Read, Grep, Glob, Edit, Write, Bash | `app/**/test/`, `app/e2e/` | test diff for one task | 40 |
-| Implementer | `claude-sonnet-5-5` | Read, Grep, Glob, Edit, Write, Bash | `app/**/src/`, `infra/` | code diff for one task | 60 |
+| Implementer | `claude-sonnet-5-5` | Read, Grep, Glob, Edit, Write, Bash | `app/**/src/`, `infra/app-stack.ts`, `infra/preview-stack.ts`, `infra/app/` (never factory infrastructure) | code diff for one task | 60 |
 | Reviewer | `claude-sonnet-5-5` | Read, Grep, Glob | nothing | `review.json` | 25 |
-| QA explorer | `claude-sonnet-5-5` | Playwright MCP, Read | nothing | `qa-report.json` + screenshots | 60 |
-| Failure classifier | `claude-haiku-5-5` | none (input in prompt) | nothing | `{kind, evidence}` | 1 |
-| Retro | `claude-haiku-5-5` | Read | `factory/lessons/` (via PR) | `retro.md` | 20 |
+| QA explorer | `claude-sonnet-5-5` | Playwright MCP, Read | the runner-provided screenshot directory only (outside the repo; the runner uploads it to S3) | `qa-report.json` + screenshots | 60 |
+| Failure classifier | `claude-haiku-5-5` | none: one Messages API call, input in prompt | nothing | `{kind, evidence}` | 1 |
+| Retro | `claude-haiku-5-5` | Read, Edit, Write | `factory/lessons/`; the runner commits and opens the PR | `retro.md` | 20 |
 
 **Rules that apply to every role**
 
-- The role runner wraps `query()` from `@anthropic-ai/claude-agent-sdk`. It sets `cwd` to the work item's worktree, `allowedTools` from config, `maxTurns`, and a `PreToolUse` hook that blocks writes outside the role's paths.
+- The role runner wraps `query()` from `@anthropic-ai/claude-agent-sdk`. It sets:
+  - `cwd` to the work item's worktree.
+  - `tools` to the role's tool list; these are the only tools that exist for the role. `allowedTools` only pre-approves calls and does not restrict anything.
+  - `allowedTools` to the role's pre-approved calls, including Bash patterns such as `Bash(pnpm test:*)`.
+  - `permissionMode: "dontAsk"`, so anything not pre-approved is denied. The mode is never left to default, because the default can be `auto`.
+  - `settingSources: ["project"]`, so the user's `~/.claude` never leaks in.
+  - `skills` to the role's skill list.
+  - `maxTurns` and `maxBudgetUsd` from the role config.
+  - A `PreToolUse` hook that denies `Edit`, `Write` and `NotebookEdit` outside the role's paths. The hook resolves paths against the worktree, following symlinks.
+- The runner reads `.claude/agents/<role>.md` itself and passes it as the system prompt. Roles never get the Agent tool, so they cannot start subagents.
 - Every role starts from the change folder and the current `openspec/specs/` for the affected capabilities. Only the proposal author changes requirements and only the architect changes design. The implementer never edits `tasks.md`; the runner ticks a task once its gates pass.
-- Bash is allowlisted per role (for example `pnpm test`, `pnpm lint`, `git diff`, `openspec validate`). No network commands, no `git push`; the deterministic runner pushes.
-- The final message must be the role's JSON result. The runner validates it against its schema, and validates any OpenSpec files with `openspec validate <id> --strict`; invalid output counts as a failed attempt.
-- Every SDK message is streamed to the ledger with token usage, so cost per role, per task and per work item is always known.
+- Bash is allowlisted per role as permission rules (for example `pnpm test`, `pnpm lint`, `git diff`, `openspec validate`). No network commands, no `git push`; the deterministic runner pushes. Bash can write files, so roles with Bash also run in the SDK `sandbox`, with filesystem writes limited to the role's paths.
+- The role returns its JSON result as structured output (`outputFormat` built from its zod schema with `z.toJSONSchema`). The runner re-parses `structured_output` with zod and validates any OpenSpec files with `openspec validate <id> --strict`. Invalid output, or any non-`success` result subtype, counts as a failed attempt.
+- Every SDK message is streamed to the ledger with token usage, so cost per role, per task and per work item is always known. Cost comes from the result's `modelUsage` and `total_cost_usd`, which are estimates in both auth modes. The auth mode comes from the init message's `apiKeySource`.
 - Prompts receive only artifacts, never other roles' transcripts.
 
-**Role runner sketch** (verify option names against the current Agent SDK TypeScript reference):
+**Role runner sketch** (checked against Agent SDK 0.3.310; the SDK is 0.x, so pin it exactly and re-check on every upgrade):
 
 ```ts
-import { query } from "@anthropic-ai/claude-agent-sdk";
+import { query, type HookCallback } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
 
 export async function runRole(role: RoleConfig, item: WorkItem): Promise<Artifact> {
-  const guardPaths = async (input: any) => {
-    const path = input.tool_input?.file_path ?? "";
-    return role.writable.some((g) => minimatch(path, g))
+  const guardPaths: HookCallback = async (input) => {
+    if (input.hook_event_name !== "PreToolUse") return {};
+    const { file_path, notebook_path } = input.tool_input as { file_path?: string; notebook_path?: string };
+    const rel = relative(item.worktree, await realpathOrSelf(resolve(item.worktree, file_path ?? notebook_path ?? "")));
+    const allowed = !rel.startsWith("..") && role.writable.some((g) => minimatch(rel, g));
+    return allowed
       ? {}
-      : { decision: "block", reason: `${role.name} may only write ${role.writable.join(", ")}` };
+      : {
+          hookSpecificOutput: {
+            hookEventName: "PreToolUse",
+            permissionDecision: "deny",
+            permissionDecisionReason: `${role.name} may only write ${role.writable.join(", ")}`,
+          },
+        };
   };
 
-  let last = "";
   for await (const msg of query({
-    prompt: renderPrompt(role, item),
+    prompt: renderPrompt(role, item), // artifacts only, never transcripts
     options: {
       cwd: item.worktree,
       model: role.model,
-      allowedTools: role.tools,
+      systemPrompt: role.prompt, // from .claude/agents/<role>.md
+      tools: role.tools,
+      allowedTools: role.allow,
+      permissionMode: "dontAsk",
+      settingSources: ["project"],
+      skills: role.skills,
       maxTurns: role.maxTurns,
-      hooks: { PreToolUse: [{ matcher: "Edit|Write", hooks: [guardPaths] }] },
+      maxBudgetUsd: role.maxBudgetUsd,
+      outputFormat: { type: "json_schema", schema: z.toJSONSchema(role.schema) },
+      hooks: { PreToolUse: [{ matcher: "Edit|Write|NotebookEdit", hooks: [guardPaths] }] },
     },
   })) {
     await ledger.record(item.id, role.name, msg);
-    last = extractText(msg) ?? last;
+    if (msg.type === "result") {
+      if (msg.subtype !== "success") throw new AttemptFailed(msg.subtype);
+      return role.schema.parse(msg.structured_output);
+    }
   }
-  return role.schema.parse(JSON.parse(last));
+  throw new AttemptFailed("no result");
 }
 ```
 
-## Stack, repo layout, infrastructure and security
+## 5. Stack, repo layout, infrastructure and security
 
 One TypeScript monorepo holds the factory, the app and all infrastructure; everything deploys to one AWS account with CDK.
 
@@ -177,11 +210,12 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 
 | Area | Choice |
 | --- | --- |
-| Language | TypeScript (strict) everywhere, Node 22 LTS |
-| Package manager | pnpm workspaces |
-| Agents | `@anthropic-ai/claude-agent-sdk`; Anthropic API key in Secrets Manager |
-| Specs and tasks | OpenSpec: CLI in the worker image and locally; changes under `openspec/changes/` |
-| Orchestration | AWS Step Functions (Standard workflows), Map state for the per-task loop |
+| Language | TypeScript 6.0 (strict) everywhere, Node 24 LTS. TypeScript 7 waits until typescript-eslint supports it. |
+| Package manager | pnpm workspaces; exact versions pinned for the Agent SDK (0.x) and the OpenSpec CLI |
+| Lint | ESLint (flat config) + typescript-eslint |
+| Agents | `@anthropic-ai/claude-agent-sdk`; `@anthropic-ai/sdk` for the classifier and Batch API calls; Anthropic API key in Secrets Manager |
+| Specs and tasks | OpenSpec (`@fission-ai/openspec`): CLI in the worker image and locally, as a repo dev dependency; changes under `openspec/changes/` |
+| Orchestration | AWS Step Functions (Standard workflows, JSONata), Map state for the per-task loop |
 | Agent compute | ECS Fargate tasks from one `factory-worker` image in ECR |
 | Infrastructure | AWS CDK v2 (TypeScript) |
 | App frontend | React + Vite PWA, responsive for desktop and mobile; S3 + CloudFront |
@@ -198,7 +232,8 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 ├── CLAUDE.md                 # build/test commands, repo map, conventions (short)
 ├── .claude/
 │   ├── agents/               # one prompt file per role
-│   ├── skills/               # reusable know-how (e.g. writing-scenarios, splitting-tasks)
+│   ├── skills/               # reusable know-how (e.g. writing-scenarios, splitting-tasks), plus openspec-* skills from `openspec init`
+│   ├── commands/opsx/        # OpenSpec slash commands from `openspec init`, for hand-running stages
 │   └── settings.json         # hooks shared by local Claude Code and the worker
 ├── openspec/                 # specs, active changes, archive (see section 3)
 ├── docs/
@@ -224,9 +259,10 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 ├── evals/
 │   └── enrichment/           # word-in-context translation eval set
 └── infra/
-    ├── factory-stack.ts
+    ├── factory-stack.ts      # never written by factory roles
     ├── app-stack.ts
-    └── preview-stack.ts      # one instance per PR
+    ├── preview-stack.ts      # one instance per PR
+    └── app/                  # constructs shared by the app and preview stacks
 ```
 
 ### Environments
@@ -234,15 +270,17 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 - **Factory:** one long-lived stack (Step Functions, Fargate cluster, ledger, intake API).
 - **Preview:** one app stack per open PR, named `pr-<number>`, destroyed on merge or close.
 - **Production:** one app stack, deployed only by the Release state.
+- **Region:** every stack lives in eu-central-1. The one exception is a small certificate stack in us-east-1 for the CloudFront certificates, referenced with CDK cross-region references.
 
 ### Security
 
-- Worker tasks run in private subnets. Egress goes through a proxy or security-group allowlist: Anthropic API, GitHub, npm registry, the preview URL. Nothing else.
+- Worker tasks run in private subnets. Egress goes through one small NAT instance running a domain-allowlist proxy: Anthropic API, GitHub, npm registry, the preview URL. Nothing else. S3 and DynamoDB are reached through free gateway endpoints. A NAT Gateway (about $38/month) or Network Firewall would not fit the budget. The trade-off is a single AZ with no high availability, which is acceptable for the factory.
 - Each task gets a short-lived GitHub App installation token scoped to this repo, and no AWS credentials beyond reading its inputs and writing its artifacts. Deploys use a separate deployer role that agents never hold.
-- Agent-visible content from issues, web pages or the app under test is data, never instructions. Role prompts say so, and hooks enforce the path and command allowlists regardless.
+- Agent-visible content from issues, web pages or the app under test is data, never instructions. Role prompts say so, and hooks, permission rules and the sandbox enforce the path and command allowlists regardless.
+- No factory role may change factory infrastructure (`infra/factory-stack.ts` and its constructs) through a work item. It changes only through the owner or a local Claude Code session.
 - Monthly AWS budget alarm and a per-work-item token budget; exceeding either pauses the execution and notifies the owner.
 
-## First workload: the Kindle vocabulary app
+## 6. First workload: the Kindle vocabulary app
 
 A responsive web app where learners upload the words they looked up on their Kindle and practise them with the book context, a translation into their own language and dictionary examples.
 
@@ -268,6 +306,8 @@ The Kindle stores lookups in `system/vocabulary/vocab.db`, a SQLite file the use
 | `WORDS` | `id`, `word`, `stem`, `lang`, `timestamp` | The looked-up word and its lemma |
 | `LOOKUPS` | `word_key`, `book_key`, `usage`, `timestamp` | One lookup; `usage` is the sentence context |
 | `BOOK_INFO` | `id`, `title`, `authors`, `lang` | The book |
+
+Real files usually carry more: `BOOK_INFO.asin` and `guid`, `WORDS.profileid`, `LOOKUPS.dict_key` and `pos`, and the tables `DICT_INFO`, `METADATA` and `VERSION`. `WORDS.id` and `LOOKUPS.word_key` look like `en:word`, and timestamps are epoch milliseconds. The fixture script strips the identifying ones: ASINs, GUIDs, profile and device IDs, and `METADATA` values.
 
 - The sentence context comes free in `LOOKUPS.usage`. Paragraph context needs the book text, so the user may optionally upload a DRM-free EPUB of the same book; the importer then locates each sentence and stores its paragraph.
 - Re-uploading a newer `vocab.db` must be idempotent: only new lookups are added.
@@ -299,12 +339,12 @@ The Kindle stores lookups in `system/vocabulary/vocab.db`, a SQLite file the use
 - Importing a 2,000-word `vocab.db` completes, including enrichment, within 15 minutes.
 - Personal data stays in one AWS region (eu-central-1).
 
-## Milestones
+## 7. Milestones
 
 Eight milestones, each ending in a working end-to-end path; app features enter as factory workload from milestone 3 onwards.
 
 1. **M0 Foundations**
-   - Deliverables: monorepo with pnpm, strict TS, Vitest, lint; `openspec init` with project conventions filled in; `CLAUDE.md`; ADRs 0001–0003 (stack, orchestration, ledger store); a basic GitHub Actions CI running the gates on every PR, including `openspec validate --strict`; a real `vocab.db` fixture from the owner (anonymised if needed) in `app/fixtures/`.
+   - Deliverables: monorepo with pnpm, strict TS, Vitest, lint; `openspec init` with project conventions filled in (`openspec/config.yaml`); `CLAUDE.md`; ADRs 0001–0005 (stack, orchestration, ledger store, OpenSpec usage and capabilities, fixture anonymisation); a basic GitHub Actions CI running the gates on every PR, including `openspec validate --all --strict`; an anonymised copy of the owner's real `vocab.db` in `app/fixtures/`, produced by a committed script; the approved OpenSpec changes for M1's `orchestration` and `roles` work.
    - Exit: `pnpm check` runs typecheck, lint, tests and OpenSpec validation green locally and in CI.
 2. **M1 Local walking skeleton**
    - Deliverables: `Forge` interface + GitHub implementation; role runner; proposal-author role; zod schema for its JSON result; a local ledger (Postgres in Docker); CLI `pnpm factory run --issue <n> --until proposal`.
@@ -332,10 +372,15 @@ Eight milestones, each ending in a working end-to-end path; app features enter a
    - Workload: optional EPUB upload for paragraph context.
    - Exit: a baseline benchmark run is recorded, and at least one retro PR has measurably improved success rate or cost.
 
-## Owner decisions
+## 8. Owner decisions
 
-Decided on 26 October 2026. Claude Code treats these as requirements and records each in an ADR when its milestone starts.
+Decided on 26–27 October 2026. Claude Code treats these as requirements and records each in an ADR when its milestone starts. Open items are unticked; they are decided when their milestone starts.
 
+- [x] **Toolchain (M0):** Node 24 LTS, TypeScript 6.0, ESLint + typescript-eslint. Revisit TypeScript 7 once typescript-eslint supports it.
+- [x] **OpenSpec change scope (M0):** per milestone. A change holds only what its milestone builds and is archived at that milestone's exit.
+- [x] **Implementer infrastructure scope (M3):** app and preview stacks only (`infra/app-stack.ts`, `infra/preview-stack.ts`, `infra/app/`). Factory infrastructure is never changed by a work item.
+- [x] **Worker egress (M2):** one t4g.nano NAT instance with a domain-allowlist proxy, plus S3/DynamoDB gateway endpoints. No NAT Gateway, no Network Firewall.
+- [ ] **Preview database (M4):** a full Aurora cluster per PR is slow (about 10 minutes) and costly. Recommendation: previews share the app cluster with one database per PR, dropped when the PR closes.
 - [x] **Model billing (M1):** local runs use the subscription's Agent SDK credit; cloud runs (M2 onwards) use an Anthropic API key. The role runner supports both auth modes by config, and the ledger records which mode each run used, since subscription runs have no exact per-call price (record tokens, estimate cost).
 - [x] **Ledger store (M0):** a dedicated Aurora Serverless v2 Postgres cluster with auto-pause, separate from the app's.
 - [x] **Capabilities (M0):** app: `vocab-import`, `trajectories`, `enrichment`, `practice`, `auth`. Factory: `orchestration`, `roles`, `gates`. The factory capabilities are specified in OpenSpec from M0, so Claude Code builds the factory through OpenSpec changes too.
