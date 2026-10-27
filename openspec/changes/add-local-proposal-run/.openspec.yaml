@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-10-27
+goal: "M1: a CLI turns a GitHub issue into a validated OpenSpec change and
+  records it in the ledger"
+x-complexity: medium
