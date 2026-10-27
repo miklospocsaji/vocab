@@ -22,6 +22,7 @@ rules:
     - 'Every requirement uses SHALL or MUST and has at least one "#### Scenario:" with WHEN/THEN.'
     - 'Scenario titles are unique within the change; tests reference them verbatim ("Scenario: <title>").'
     - Each scenario is observable and testable without reading the implementation.
+    - A delta that creates a new capability starts with a "## Purpose" section; archive otherwise leaves a placeholder that fails strict validation.
   design:
     - List the contracts in app/contracts/ that change, and the decisions that need an ADR.
   tasks:

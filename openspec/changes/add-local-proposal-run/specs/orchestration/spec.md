@@ -1,3 +1,6 @@
+## Purpose
+The work-item lifecycle: the states a work item moves through from issue to release, their transitions, retries and stopping points, and what the ledger records for each.
+
 ## ADDED Requirements
 
 ### Requirement: Intake creates a work item

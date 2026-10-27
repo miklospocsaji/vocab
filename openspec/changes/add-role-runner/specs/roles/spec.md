@@ -1,3 +1,6 @@
+## Purpose
+How an agent role is defined and run, and the boundaries every role is held to: tools, writable paths, commands, settings, budgets, prompt contents and result validation.
+
 ## ADDED Requirements
 
 ### Requirement: Roles are defined by validated config
