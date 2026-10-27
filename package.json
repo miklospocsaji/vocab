@@ -1,0 +1,26 @@
+{
+  "name": "vocab",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "typecheck": "tsc -p . && pnpm -r --if-present typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "spec:validate": "openspec validate --all --strict --no-interactive",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm spec:validate"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@fission-ai/openspec": "1.15.0",
+    "@types/node": "24.19.2",
+    "eslint": "10.13.0",
+    "globals": "17.13.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.0.5"
+  }
+}

@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-10-27
+goal: "M1: a role runner that enforces each role's boundaries, plus the
+  proposal-author role"
+x-complexity: large

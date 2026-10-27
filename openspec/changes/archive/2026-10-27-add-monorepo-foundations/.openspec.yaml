@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-10-27
+goal: pnpm check runs all M0 gates locally and in CI
+x-complexity: small

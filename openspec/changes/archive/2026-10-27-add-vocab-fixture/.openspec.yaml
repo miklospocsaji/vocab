@@ -1,0 +1,4 @@
+schema: spec-driven
+created: 2026-10-27
+goal: an anonymised real vocab.db fixture for importer tests
+x-complexity: small
