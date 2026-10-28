@@ -20,6 +20,9 @@
 - **Change ids are deterministic.** Intake computes them from the title, with no agent involved, so the branch exists before any agent runs.
 - **Re-runs resume.** The work item is looked up by issue number, and each state handler is idempotent.
 - **Retry evidence is passed as an artifact.** It is the `openspec validate --json` output, never a transcript.
+- **Which failures retry (owner decision, 2026-10-27).** Any failed attempt is retried, up to 3 attempts in total, except `auth-mode-mismatch`, which escalates at once. Re-running an `escalated` work item runs no agent and exits non-zero.
+- **Suffixes fit the length limit.** A collision suffix (`-2`) counts toward the 40 characters, so the base id is cut shorter at a word boundary.
+- **Ledger tests need Postgres.** `pnpm check` requires `pnpm db:up` locally, and CI runs a Postgres service container. The tests fail rather than skip when the database is missing.
 
 ## Risks
 

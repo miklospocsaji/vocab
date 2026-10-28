@@ -9,9 +9,10 @@
   "scripts": {
     "typecheck": "tsc -p . && pnpm -r --if-present typecheck",
     "lint": "eslint .",
-    "test": "vitest run",
-    "spec:validate": "openspec validate --all --strict --no-interactive",
-    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm spec:validate"
+    "test": "vitest run --project unit",
+    "spec:validate": "OPENSPEC_TELEMETRY=0 openspec validate --all --strict --no-interactive",
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm spec:validate",
+    "test:live": "vitest run --project live"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

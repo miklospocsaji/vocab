@@ -15,6 +15,8 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      OPENSPEC_TELEMETRY: "0"
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4
