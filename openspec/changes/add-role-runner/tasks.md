@@ -18,8 +18,8 @@ Unit tests need no model and run in `pnpm check`. Live tests (`*.live.test.ts`) 
 
 ## 2. Role config
 
-- [ ] 2.1 Failing tests for loading role configs. Scenario: Invalid config is refused, covering three cases: writable paths missing, an unknown result schema, and the prompt file missing.
-- [ ] 2.2 Write `factory/roles/src/config.ts`:
+- [x] 2.1 Failing tests for loading role configs. Scenario: Invalid config is refused, covering three cases: writable paths missing, an unknown result schema, and the prompt file missing.
+- [x] 2.2 Write `factory/roles/src/config.ts`:
   - the zod schema for `<role>.yaml`
   - `loadRole(name)`, which also reads `.claude/agents/<role>.md` and strips its frontmatter
   - a result-schema registry in `factory/artifacts`
