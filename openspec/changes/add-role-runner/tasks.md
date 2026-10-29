@@ -27,7 +27,7 @@ Unit tests need no model and run in `pnpm check`. Live tests (`*.live.test.ts`) 
 
 ## 3. Path guard (pure, no model)
 
-- [ ] 3.1 Failing unit tests for the `PreToolUse` hook on a temp worktree. Scenarios:
+- [x] 3.1 Failing unit tests for the `PreToolUse` hook on a temp worktree. Scenarios:
   - Write outside the allowed paths is denied
   - Path traversal is denied
   - Symlink escape is denied
