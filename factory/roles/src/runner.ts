@@ -101,7 +101,8 @@ export function createRunner(options: RunnerOptions): RunRole {
         skills: role.skills,
         maxTurns: role.maxTurns,
         maxBudgetUsd: role.maxBudgetUsd,
-        outputFormat: { type: "json_schema", schema: z.toJSONSchema(role.schema) },
+        // The CLI validates --json-schema as draft-07 and rejects zod's default 2020-12 `$schema`.
+        outputFormat: { type: "json_schema", schema: z.toJSONSchema(role.schema, { target: "draft-07" }) },
         hooks: {
           PreToolUse: [
             {

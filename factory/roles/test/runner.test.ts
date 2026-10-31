@@ -17,7 +17,6 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import { ProposalResult } from "@vocab/factory-artifacts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { z } from "zod";
 import type { Role } from "../src/config.ts";
 import { renderPrompt, type RetryEvidence } from "../src/prompt.ts";
 import { AttemptFailed, createRunner, type QueryFn, type Recorder, type WorkItem } from "../src/runner.ts";
@@ -332,7 +331,33 @@ describe("runRole", () => {
         skills: role.skills,
         maxTurns: role.maxTurns,
         maxBudgetUsd: role.maxBudgetUsd,
-        outputFormat: { type: "json_schema", schema: z.toJSONSchema(ProposalResult) },
+        outputFormat: { type: "json_schema" },
+      });
+    });
+
+    // The CLI validates --json-schema against draft-07 and exits on zod's default 2020-12
+    // `$schema` (found by the first live run). Literal expectations, not z.toJSONSchema, so
+    // the test cannot share the runner's mistake.
+    it("passes the result schema as draft-07 JSON Schema, keeping every constraint", async () => {
+      const options = onlyOptions(await run([init(), success(VALID_RESULT)]));
+      expect(options.outputFormat?.type).toBe("json_schema");
+      const schema = options.outputFormat?.schema;
+      expect(schema).toMatchObject({
+        $schema: "http://json-schema.org/draft-07/schema#",
+        type: "object",
+        additionalProperties: false,
+        required: ["changeId", "capabilities", "complexity", "summary", "openQuestions"],
+        properties: {
+          changeId: { type: "string", pattern: "^[a-z][a-z0-9]*(-[a-z0-9]+)+$" },
+          capabilities: { type: "array", minItems: 1, items: {
+              type: "string",
+              enum: ["vocab-import", "trajectories", "enrichment", "practice", "auth", "orchestration", "roles", "gates"],
+            },
+          },
+          complexity: { type: "string", enum: ["small", "medium", "large"] },
+          summary: { type: "string", minLength: 1 },
+          openQuestions: { type: "array", items: { type: "string" } },
+        },
       });
     });
 
