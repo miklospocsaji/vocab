@@ -1,6 +1,6 @@
 # 0007 Bash sandbox: read-only worktree
 
-Status: accepted (2026-10-27)
+Status: accepted (2026-10-27); amended 2026-10-31 (`autoAllowBashIfSandboxed`)
 
 ## Context
 
@@ -14,10 +14,13 @@ The task 1.3 spike, with SDK 0.3.310 on Linux and bwrap, found:
 
 So the sandbox cannot express "writable only where these globs match". Denying every sibling of the allowed paths fails as well, because a file created under a new name is not covered.
 
+The live boundary test of task 7.2 (2026-10-31) then found one more default: `sandbox.autoAllowBashIfSandboxed` is `true` unless set. With it, every sandboxed Bash command is approved automatically and the role's `Bash(...)` rules in `allowedTools` are never consulted, even under `permissionMode: "dontAsk"`. A role allowed only `openspec` ran `curl https://example.com`. Only the sandbox's network proxy stopped it.
+
 ## Decision
 
-- For every role, the runner sets `sandbox: { enabled: true, failIfUnavailable: true, allowUnsandboxedCommands: false, filesystem: { denyWrite: [<worktree>] } }`. Bash cannot write anywhere in the worktree. Outside the worktree it cannot write either, apart from the sandbox's own temp area.
+- For every role, the runner sets `sandbox: { enabled: true, failIfUnavailable: true, autoAllowBashIfSandboxed: false, allowUnsandboxedCommands: false, filesystem: { denyWrite: [<worktree>] } }`. Bash cannot write anywhere in the worktree. Outside the worktree it cannot write either, apart from the sandbox's own temp area.
 - Roles change files only through Edit and Write, which the `PreToolUse` path guard checks against their globs.
+- `autoAllowBashIfSandboxed: false` keeps the role's Bash allowlist in charge: the sandbox confines the commands the allowlist approves, and never approves commands itself.
 - `allowUnsandboxedCommands: false` stops a model from asking to run a command outside the sandbox. `failIfUnavailable: true` makes a host without sandbox support fail the attempt instead of running unconfined.
 
 This satisfies the `roles` requirement, because Bash writes are limited to a subset of the role's paths (here, none).
@@ -32,4 +35,5 @@ This satisfies the `roles` requirement, because Bash writes are limited to a sub
 
 - The proposal author is unaffected: its Bash runs read-only `openspec` commands.
 - M3 roles that run `pnpm test` through Bash may need to write tool caches (Vite and Vitest caches, coverage). Before M3, decide where those caches go: outside the worktree through env vars, a `denyWrite`-free cache directory, or running test commands only in the deterministic gates. Revisit this ADR then.
-- The live test "Bash cannot write outside the role's paths" checks this boundary, and runs again on every SDK upgrade.
+- The live tests "Bash cannot write outside the role's paths" and "Non-allowlisted command is denied" check these boundaries, and run again on every SDK upgrade. A unit test pins `autoAllowBashIfSandboxed: false` in the runner's options.
+- An SDK upgrade can change sandbox defaults. Set every sandbox option the boundaries depend on explicitly, instead of relying on a default.

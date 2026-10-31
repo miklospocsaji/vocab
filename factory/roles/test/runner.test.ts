@@ -389,6 +389,12 @@ describe("runRole", () => {
       expect(options.sandbox?.filesystem?.allowWrite).toBeUndefined();
     });
 
+    it("turns off the sandbox's Bash auto-approval, so the role's Bash allowlist decides (ADR 0007)", async () => {
+      const options = onlyOptions(await run([init(), success(VALID_RESULT)]));
+      // The SDK defaults this to true, which approves every sandboxed command and skips `allowedTools`.
+      expect(options.sandbox?.autoAllowBashIfSandboxed).toBe(false);
+    });
+
     it("hooks the path guard, with the work item's change id filled in, onto Edit, Write and NotebookEdit", async () => {
       const options = onlyOptions(await run([init(), success(VALID_RESULT)]));
       const matchers = options.hooks?.PreToolUse ?? [];

@@ -7,21 +7,21 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AttemptFailed } from "../src/runner.ts";
 import {
   CHANGE,
+  createCostLog,
+  expectGuardDenied,
   makeWorktree,
   removeDir,
   runProbe,
-  toolOutcome,
   writeAttempts,
   writeFile,
   writeProbeRole,
-  type LiveAttempt,
 } from "./live-harness.ts";
 
 let worktree: string;
-const costs: { test: string; usd: number; outcome: string }[] = [];
+const costs = createCostLog();
+const track = costs.track;
 
 beforeEach(() => {
   worktree = makeWorktree();
@@ -32,28 +32,8 @@ afterEach(() => {
 });
 
 afterAll(() => {
-  const total = costs.reduce((sum, cost) => sum + cost.usd, 0);
-  console.log(
-    [...costs.map((cost) => `  ${cost.test}: $${cost.usd.toFixed(4)} (${cost.outcome})`), `  total: $${total.toFixed(4)}`].join("\n"),
-  );
+  costs.print();
 });
-
-function track(test: string, attempt: LiveAttempt): void {
-  const outcome = attempt.outcome instanceof AttemptFailed ? `attempt failed: ${attempt.outcome.reason}` : "attempt succeeded";
-  costs.push({ test, usd: attempt.costUsd, outcome });
-}
-
-/** Every attempt was denied by the path guard, with a reason naming the role's writable paths. */
-function expectGuardDenied(attempt: LiveAttempt, path: string, writable: string): void {
-  const attempts = writeAttempts(attempt.messages, worktree, path);
-  expect(attempts.length, `the model never tried to write ${path}`).toBeGreaterThan(0);
-  for (const call of attempts) {
-    const outcome = toolOutcome(attempt.messages, call.id);
-    expect(outcome, `no tool result for ${call.name} ${JSON.stringify(call.input)}`).toBeDefined();
-    expect(outcome?.isError).toBe(true);
-    expect(outcome?.text).toContain(`Writable paths: ${writable}`);
-  }
-}
 
 describe("live write boundaries", () => {
   it("Scenario: Unlisted tool is unavailable", async () => {
@@ -91,7 +71,7 @@ describe("live write boundaries", () => {
     const attempt = await runProbe(role, worktree);
     track("Write outside the allowed paths is denied", attempt);
 
-    expectGuardDenied(attempt, `${CHANGE}/design.md`, writable);
+    expectGuardDenied(attempt, worktree, `${CHANGE}/design.md`, writable);
     expect(existsSync(join(worktree, CHANGE, "design.md"))).toBe(false);
   });
 
@@ -119,7 +99,7 @@ describe("live write boundaries", () => {
       String(call.input["file_path"]).split(/[\\/]/).includes(".."),
     );
     expect(traversing.length, `the model never tried to write through ${traversal}`).toBeGreaterThan(0);
-    expectGuardDenied(attempt, "package.json", writable);
+    expectGuardDenied(attempt, worktree, "package.json", writable);
     expect(readFileSync(join(worktree, "package.json"), "utf8")).toBe(original);
   });
 
@@ -142,7 +122,7 @@ describe("live write boundaries", () => {
       const attempt = await runProbe(role, worktree);
       track("Symlink escape is denied", attempt);
 
-      expectGuardDenied(attempt, `${CHANGE}/drafts/notes.md`, writable);
+      expectGuardDenied(attempt, worktree, `${CHANGE}/drafts/notes.md`, writable);
       expect(readdirSync(outside)).toEqual(["keep.md"]);
       expect(readFileSync(join(outside, "keep.md"), "utf8")).toBe("outside\n");
     } finally {

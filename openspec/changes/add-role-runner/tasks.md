@@ -92,7 +92,7 @@ Each test runs a small throwaway role on Haiku in a temp worktree, with a budget
   - Write outside the allowed paths is denied
   - Path traversal is denied
   - Symlink escape is denied
-- [ ] 7.2 Live Bash, isolation and limit tests. Scenarios:
+- [x] 7.2 Live Bash, isolation and limit tests. Scenarios:
   - Non-allowlisted command is denied
   - Bash cannot write outside the role's paths
   - User settings do not leak (`CLAUDE_CONFIG_DIR` and `HOME` point at a temp dir with permissive settings)

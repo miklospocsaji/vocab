@@ -115,6 +115,8 @@ export function createRunner(options: RunnerOptions): RunRole {
         sandbox: {
           enabled: true,
           failIfUnavailable: true,
+          // The SDK default (true) auto-approves every sandboxed command and bypasses the role's Bash allowlist.
+          autoAllowBashIfSandboxed: false,
           allowUnsandboxedCommands: false,
           filesystem: { denyWrite: [item.worktree] },
         },
