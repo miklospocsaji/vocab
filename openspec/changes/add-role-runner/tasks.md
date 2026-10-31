@@ -37,12 +37,12 @@ Unit tests need no model and run in `pnpm check`. Live tests (`*.live.test.ts`) 
 
 ## 4. Prompt builder (pure, no model)
 
-- [ ] 4.1 Failing tests. Scenario: Issue text is fenced as data, prompt half:
+- [x] 4.1 Failing tests. Scenario: Issue text is fenced as data, prompt half:
   - the issue body sits inside a fence that its own content cannot close
   - the fence is labelled as untrusted data
   - the retry evidence section appears only on retries
   - the input type has no field for a transcript
-- [ ] 4.2 Write `factory/roles/src/prompt.ts`.
+- [x] 4.2 Write `factory/roles/src/prompt.ts`.
 
 ## 5. Runner (stubbed SDK, no model)
 
