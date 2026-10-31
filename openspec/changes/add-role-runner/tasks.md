@@ -33,7 +33,7 @@ Unit tests need no model and run in `pnpm check`. Live tests (`*.live.test.ts`) 
   - Symlink escape is denied
 
   Also cover a new file in a directory that does not exist yet, dotfiles such as `.openspec.yaml`, and `NotebookEdit`'s `notebook_path`.
-- [ ] 3.2 Write `factory/roles/src/guard.ts`. It resolves the target against the worktree, then takes the realpath of the nearest existing ancestor, matches the writable globs with `minimatch` (`dot: true`), and denies anything outside the worktree. The deny reason lists the allowed globs.
+- [x] 3.2 Write `factory/roles/src/guard.ts`. It resolves the target against the worktree, then takes the realpath of the nearest existing ancestor, matches the writable globs with `minimatch` (`dot: true`), and denies anything outside the worktree. The deny reason lists the allowed globs.
 
 ## 4. Prompt builder (pure, no model)
 
