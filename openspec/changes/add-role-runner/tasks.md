@@ -87,7 +87,7 @@ Unit tests need no model and run in `pnpm check`. Live tests (`*.live.test.ts`) 
 
 Each test runs a small throwaway role on Haiku in a temp worktree, with a budget of about $0.10. Each test asserts that the model actually attempted the forbidden action, so a test where nothing was attempted fails rather than passing vacuously.
 
-- [ ] 7.1 Live write-boundary tests. Scenarios:
+- [x] 7.1 Live write-boundary tests. Scenarios:
   - Unlisted tool is unavailable
   - Write outside the allowed paths is denied
   - Path traversal is denied
