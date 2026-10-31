@@ -73,11 +73,11 @@ Unit tests need no model and run in `pnpm check`. Live tests (`*.live.test.ts`) 
 
 ## 6. Proposal-author role
 
-- [ ] 6.1 Failing tests:
+- [x] 6.1 Failing tests:
   - the `ProposalResult` schema: the change id, capabilities limited to the eight in ADR 0004, the complexity enum and open questions
   - `proposal-author.yaml` loads
   - its globs allow `proposal.md`, `specs/**/spec.md` and `.openspec.yaml` in its change folder, and deny `design.md`, `tasks.md` and anything outside the folder
-- [ ] 6.2 Write `factory/artifacts/src/proposal-result.ts`, `factory/roles/proposal-author.yaml` and `.claude/agents/proposal-author.md`. The config:
+- [x] 6.2 Write `factory/artifacts/src/proposal-result.ts`, `factory/roles/proposal-author.yaml` and `.claude/agents/proposal-author.md`. The config:
   - model `claude-opus-5-5`, 30 turns, `maxBudgetUsd` 3, auth mode `subscription`
   - Bash allowlist: `openspec validate`, `show`, `list` and `instructions` only, with the factory's `node_modules/.bin` on `PATH`
   - `WebFetch` pre-approved for any URL (owner decision, see `design.md`)
