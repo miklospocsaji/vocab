@@ -69,7 +69,7 @@ Unit tests need no model and run in `pnpm check`. Live tests (`*.live.test.ts`) 
   - Turn cap ends the attempt
   - Budget ends the attempt
   - Mismatched auth mode fails fast (the query is aborted on the init message)
-- [ ] 5.2 Write `factory/roles/src/runner.ts` (`runRole(role, item, evidence?)`), the `Recorder` interface, and `AttemptFailed { reason, evidence }`.
+- [x] 5.2 Write `factory/roles/src/runner.ts` (`runRole(role, item, evidence?)`), the `Recorder` interface, and `AttemptFailed { reason, evidence }`.
 
 ## 6. Proposal-author role
 
