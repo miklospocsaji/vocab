@@ -46,7 +46,7 @@ Unit tests need no model and run in `pnpm check`. Live tests (`*.live.test.ts`) 
 
 ## 5. Runner (stubbed SDK, no model)
 
-- [ ] 5.1 Failing tests against an injected `query` stub:
+- [x] 5.1 Failing tests against an injected `query` stub:
   - the exact SDK options:
     - `tools` and `allowedTools`
     - `permissionMode: "dontAsk"` and `settingSources: ["project"]`

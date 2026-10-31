@@ -4,3 +4,5 @@ export { loadRole, RoleConfigError, RoleConfigSchema, stripFrontmatter, writable
 export type { LoadRoleOptions, Role, RoleConfig } from "./config.ts";
 export { renderPrompt } from "./prompt.ts";
 export type { PromptArtifact, PromptInput, PromptIssue, RetryEvidence } from "./prompt.ts";
+export { AttemptFailed, createRunner } from "./runner.ts";
+export type { FailureReason, QueryFn, Recorder, RunnerOptions, RunRole, WorkItem } from "./runner.ts";
