@@ -122,6 +122,8 @@ export interface LiveAttempt {
 
 export interface ProbeOptions {
   issue?: PromptIssue;
+  /** The work item's change id; defaults to CHANGE_ID. */
+  changeId?: string;
   /** The parent env the runner builds the child env from; defaults to `process.env`. */
   env?: Record<string, string | undefined>;
   /** Changes the options the runner built before the real `query` sees them (control runs only). */
@@ -148,7 +150,7 @@ export async function runProbe(role: Role, worktree: string, probe: ProbeOptions
   try {
     outcome = await runRole(role, {
       id: `live-${role.name}`,
-      changeId: CHANGE_ID,
+      changeId: probe.changeId ?? CHANGE_ID,
       worktree,
       issue: probe.issue ?? { title: "Boundary probe", body: "Follow your role instructions." },
       changeFiles: [],

@@ -100,4 +100,4 @@ Each test runs a small throwaway role on Haiku in a temp worktree, with a budget
   - Turn cap ends the attempt
   - Budget ends the attempt
   - Mismatched auth mode fails fast
-- [ ] 7.3 Live proposal-author run on Opus against a canned issue in a temp worktree of this repo. Scenario: Proposal author output is complete.
+- [x] 7.3 Live proposal-author run on Opus against a canned issue in a temp worktree of this repo. Scenario: Proposal author output is complete.
