@@ -57,13 +57,13 @@ Depends on `add-role-runner` (sections 1–6). Orchestrator tests use an in-memo
   - Work item and branch are created
   - Issue without a requirement is rejected
 - [x] 6.2 Write the `intake` handler `(ctx, item) => Promise<Transition>`.
-- [ ] 6.3 Failing tests for Proposal, with the fake role runner. Scenarios:
+- [x] 6.3 Failing tests for Proposal, with the fake role runner. Scenarios:
   - Valid proposal is committed and pushed
   - Invalid proposal is retried with evidence
   - Three failed attempts escalate
 
   Also: an `auth-mode-mismatch` failure escalates at once, without a retry.
-- [ ] 6.4 Write the `proposal` handler:
+- [x] 6.4 Write the `proposal` handler:
   - scaffold the change with `openspec new change <id>`
   - run `runRole` with up to 3 attempts, recording each attempt in the ledger with its reason and auth mode
   - on retries, pass the `openspec validate --json` output as evidence

@@ -16,7 +16,12 @@ export interface HandlerContext {
 
 /**
  * A handler's result.
- * - `advance`: the work item is now in `workItem.state`, ready for the next handler.
+ * - `advance`: the work item is now in `workItem.state`, ready for the next handler. A handler
+ *   that ran a role passes the role's validated result along as `result`.
  * - `reject`: the input was not acceptable, nothing was created, and the run ends unsuccessfully.
+ * - `escalate`: the work item is now `escalated` and waits for the owner; the run ends unsuccessfully.
  */
-export type Transition = { kind: "advance"; workItem: WorkItemRow } | { kind: "reject"; reason: string };
+export type Transition =
+  | { kind: "advance"; workItem: WorkItemRow; result?: unknown }
+  | { kind: "reject"; reason: string }
+  | { kind: "escalate"; workItem: WorkItemRow; reason: string };
