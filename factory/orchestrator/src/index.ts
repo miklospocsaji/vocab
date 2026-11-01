@@ -5,4 +5,8 @@ export { intake, MISSING_REQUIREMENT_COMMENT } from "./intake.ts";
 export type { IntakeItem } from "./intake.ts";
 export { MAX_PROPOSAL_ATTEMPTS, proposal } from "./proposal.ts";
 export type { ProposalContext } from "./proposal.ts";
-// The local run loop arrives in add-local-proposal-run section 7.
+export { factoryHome, worktreePath } from "./git.ts";
+export { isRunUntil, RUN_UNTIL, runWorkItem } from "./run.ts";
+export type { RunOutcome, RunRequest, RunUntil } from "./run.ts";
+export { renderProposalSummary } from "./summary.ts";
+export type { ProposalSummaryInput } from "./summary.ts";

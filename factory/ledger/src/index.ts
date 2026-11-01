@@ -8,11 +8,12 @@ export {
   findWorkItemByChangeId,
   findWorkItemByIssue,
   listAttempts,
+  listAttemptUsage,
   listMessages,
   openAttempt,
   setWorkItemState,
   workItemCost,
 } from "./queries.ts";
-export type { AttemptEnd, AttemptOutcome, AttemptRow, AuthMode, MessageRow, NewAttempt, NewWorkItem, WorkItemRow } from "./queries.ts";
+export type { AttemptEnd, AttemptUsage, AttemptOutcome, AttemptRow, AuthMode, MessageRow, NewAttempt, NewWorkItem, WorkItemRow } from "./queries.ts";
 export { extractUsage, LedgerRecorder } from "./recorder.ts";
 export type { TokenUsage } from "./recorder.ts";

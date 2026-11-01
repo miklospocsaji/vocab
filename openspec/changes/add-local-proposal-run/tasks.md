@@ -71,13 +71,13 @@ Depends on `add-role-runner` (sections 1–6). Orchestrator tests use an in-memo
 
 ## 7. Run loop and CLI
 
-- [ ] 7.1 Failing tests for the local run loop. Scenarios:
+- [x] 7.1 Failing tests for the local run loop. Scenarios:
   - Summary comment is posted
   - Re-run after completion does nothing
   - Cost is visible after a run
 
   Also: re-running an `escalated` item runs no agent and exits non-zero.
-- [ ] 7.2 Write:
+- [x] 7.2 Write:
   - the local run loop (states as a string union, `--until` handling, resume by issue number)
   - the summary comment renderer
   - `factory/cli/src/main.ts` (`run --issue <n> --until proposal`), with its exit codes and real dependency wiring

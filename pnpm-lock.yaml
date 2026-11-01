@@ -201,9 +201,25 @@ importers:
 
   factory/cli:
     dependencies:
+      '@vocab/factory-forge':
+        specifier: workspace:*
+        version: link:../forge
+      '@vocab/factory-ledger':
+        specifier: workspace:*
+        version: link:../ledger
       '@vocab/factory-orchestrator':
         specifier: workspace:*
         version: link:../orchestrator
+      '@vocab/factory-roles':
+        specifier: workspace:*
+        version: link:../roles
+      pg:
+        specifier: 8.23.1
+        version: 8.23.1
+    devDependencies:
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
 
   factory/forge:
     dependencies:
@@ -229,6 +245,9 @@ importers:
 
   factory/orchestrator:
     dependencies:
+      '@vocab/factory-artifacts':
+        specifier: workspace:*
+        version: link:../artifacts
       '@vocab/factory-forge':
         specifier: workspace:*
         version: link:../forge

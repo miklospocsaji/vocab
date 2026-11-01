@@ -4,6 +4,7 @@
  */
 import type { FailureReason } from "@vocab/factory-roles";
 import type { Db } from "./db.ts";
+import type { TokenUsage } from "./recorder.ts";
 
 export type AuthMode = "api-key" | "subscription";
 export type AttemptOutcome = "succeeded" | "failed";
@@ -255,4 +256,31 @@ function isUniqueViolation(error: unknown, constraint: string): boolean {
     (error as { code?: unknown }).code === UNIQUE_VIOLATION &&
     (error as { constraint?: unknown }).constraint === constraint
   );
+}
+
+/** An attempt's token usage: the sum over its result messages, which carry each session's totals. */
+export interface AttemptUsage extends TokenUsage {
+  attemptId: string;
+}
+
+/** Token usage per attempt of the work item, in attempt order; an attempt without a result message has zeros. */
+export async function listAttemptUsage(db: Db, workItemId: string): Promise<AttemptUsage[]> {
+  const { rows } = await db.query<{ attempt_id: string; input: string; output: string; cache_read: string; cache_creation: string }>(
+    `SELECT a.id AS attempt_id,
+            COALESCE(SUM(m.input_tokens), 0) AS input,
+            COALESCE(SUM(m.output_tokens), 0) AS output,
+            COALESCE(SUM(m.cache_read_tokens), 0) AS cache_read,
+            COALESCE(SUM(m.cache_creation_tokens), 0) AS cache_creation
+     FROM attempts a LEFT JOIN messages m ON m.attempt_id = a.id AND m.type = 'result'
+     WHERE a.work_item_id = $1
+     GROUP BY a.id ORDER BY a.id`,
+    [workItemId],
+  );
+  return rows.map((row) => ({
+    attemptId: row.attempt_id,
+    inputTokens: Number(row.input),
+    outputTokens: Number(row.output),
+    cacheReadTokens: Number(row.cache_read),
+    cacheCreationTokens: Number(row.cache_creation),
+  }));
 }

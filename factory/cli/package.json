@@ -6,6 +6,13 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
-    "@vocab/factory-orchestrator": "workspace:*"
+    "@vocab/factory-forge": "workspace:*",
+    "@vocab/factory-ledger": "workspace:*",
+    "@vocab/factory-orchestrator": "workspace:*",
+    "@vocab/factory-roles": "workspace:*",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
   }
 }

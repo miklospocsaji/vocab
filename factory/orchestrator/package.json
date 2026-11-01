@@ -9,6 +9,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@vocab/factory-artifacts": "workspace:*",
     "@vocab/factory-forge": "workspace:*",
     "@vocab/factory-ledger": "workspace:*",
     "@vocab/factory-roles": "workspace:*"
