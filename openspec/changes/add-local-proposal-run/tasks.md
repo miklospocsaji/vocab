@@ -4,7 +4,7 @@ Depends on `add-role-runner` (sections 1–6). Orchestrator tests use an in-memo
 
 ## 1. Packages and local Postgres
 
-- [ ] 1.1 Create the packages `factory/ledger`, `factory/forge`, `factory/orchestrator` and `factory/cli`, each with a typecheck script and a Vitest project. Add `pg` and `@octokit/rest`, pinned exactly. Then:
+- [x] 1.1 Create the packages `factory/ledger`, `factory/forge`, `factory/orchestrator` and `factory/cli`, each with a typecheck script and a Vitest project. Add `pg` and `@octokit/rest`, pinned exactly. Then:
   - Add `docker-compose.yml` with Postgres on a non-default port.
   - Add root scripts `db:up` and `factory` (`node factory/cli/src/main.ts`).
   - Ledger-backed tests read `FACTORY_DATABASE_URL`. If it is unset they fail with a clear message, never skip, so `pnpm check` needs `pnpm db:up` first.
@@ -12,14 +12,14 @@ Depends on `add-role-runner` (sections 1–6). Orchestrator tests use an in-memo
 
 ## 2. Ledger
 
-- [ ] 2.1 Failing tests against Postgres, with one schema per test file:
+- [x] 2.1 Failing tests against Postgres, with one schema per test file:
   - migrations apply once and are idempotent
   - a work item is created and found by issue number
   - `change_id` is unique
   - attempts open and close with an outcome and failure reason
   - token usage is extracted from SDK messages
   - a work item's estimated cost is the sum over its attempts
-- [ ] 2.2 Write:
+- [x] 2.2 Write:
   - `factory/ledger/migrations/0001_init.sql`, following the data model in `design.md`, plus a `schema_migrations` table
   - the migration runner
   - typed queries

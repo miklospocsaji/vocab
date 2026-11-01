@@ -1,0 +1,11 @@
+{
+  "name": "@vocab/factory-cli",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@vocab/factory-orchestrator": "workspace:*"
+  }
+}

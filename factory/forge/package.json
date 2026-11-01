@@ -1,0 +1,14 @@
+{
+  "name": "@vocab/factory-forge",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@octokit/rest": "22.0.1"
+  }
+}

@@ -12,7 +12,9 @@
     "test": "vitest run --project unit",
     "spec:validate": "OPENSPEC_TELEMETRY=0 openspec validate --all --strict --no-interactive",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm spec:validate",
-    "test:live": "vitest run --project live"
+    "test:live": "vitest run --project live",
+    "db:up": "docker compose up -d --wait ledger",
+    "factory": "node factory/cli/src/main.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
