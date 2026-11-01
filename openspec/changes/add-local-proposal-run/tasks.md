@@ -40,8 +40,8 @@ Depends on `add-role-runner` (sections 1–6). Orchestrator tests use an in-memo
 
 ## 4. Forge
 
-- [ ] 4.1 Failing tests for `GitHubForge`, with an injected `fetch` and no network: `getIssue`, `comment`, `createBranch` (from the default branch head; it is a no-op if the branch exists) and `branchExists`. Add a `FakeForge` test helper with the same contract and run it against shared contract tests.
-- [ ] 4.2 Write the `Forge` interface, `GitHubForge` and `FakeForge`. Locally the token comes from `gh auth token` at CLI start-up and is never logged. `pushBranch` pushes with the token through a git credential helper, never in the remote URL.
+- [x] 4.1 Failing tests for `GitHubForge`, with an injected `fetch` and no network: `getIssue`, `comment`, `createBranch` (from the default branch head; it is a no-op if the branch exists) and `branchExists`. Add a `FakeForge` test helper with the same contract and run it against shared contract tests.
+- [x] 4.2 Write the `Forge` interface, `GitHubForge` and `FakeForge`. Locally the token comes from `gh auth token` at CLI start-up and is never logged. `pushBranch` pushes with the token through a git credential helper, never in the remote URL.
 
 ## 5. Worktrees and git
 
