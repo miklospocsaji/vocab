@@ -1,0 +1,17 @@
+{
+  "name": "@vocab/factory-orchestrator",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@vocab/factory-artifacts": "workspace:*",
+    "@vocab/factory-forge": "workspace:*",
+    "@vocab/factory-ledger": "workspace:*",
+    "@vocab/factory-roles": "workspace:*"
+  }
+}

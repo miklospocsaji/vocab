@@ -15,6 +15,24 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    env:
+      OPENSPEC_TELEMETRY: "0"
+      FACTORY_DATABASE_URL: postgres://factory:factory@localhost:54329/factory
+    # The ledger tests need Postgres; same image and port as docker-compose.yml.
+    services:
+      ledger:
+        image: postgres:17.9-alpine
+        env:
+          POSTGRES_USER: factory
+          POSTGRES_PASSWORD: factory
+          POSTGRES_DB: factory
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U factory -d factory"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v4

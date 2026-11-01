@@ -148,7 +148,7 @@ Ten roles, each defined by one config file in `factory/roles/<role>.yaml` plus a
 - The runner reads `.claude/agents/<role>.md` itself and passes it as the system prompt. Roles never get the Agent tool, so they cannot start subagents.
 - Every role starts from the change folder and the current `openspec/specs/` for the affected capabilities. Only the proposal author changes requirements and only the architect changes design. The implementer never edits `tasks.md`; the runner ticks a task once its gates pass.
 - Bash is allowlisted per role as permission rules (for example `pnpm test`, `pnpm lint`, `git diff`, `openspec validate`). No network commands, no `git push`; the deterministic runner pushes. Bash can write files, so roles with Bash also run in the SDK `sandbox`, with filesystem writes limited to the role's paths.
-- The role returns its JSON result as structured output (`outputFormat` built from its zod schema with `z.toJSONSchema`). The runner re-parses `structured_output` with zod and validates any OpenSpec files with `openspec validate <id> --strict`. Invalid output, or any non-`success` result subtype, counts as a failed attempt.
+- The role returns its JSON result as structured output (`outputFormat` built from its zod schema with `z.toJSONSchema`, targeting draft-07, because the CLI rejects zod's default 2020-12 `$schema`). The runner re-parses `structured_output` with zod and validates any OpenSpec files with `openspec validate <id> --strict`. Invalid output, or any non-`success` result subtype, counts as a failed attempt.
 - Every SDK message is streamed to the ledger with token usage, so cost per role, per task and per work item is always known. Cost comes from the result's `modelUsage` and `total_cost_usd`, which are estimates in both auth modes. The auth mode comes from the init message's `apiKeySource`.
 - Prompts receive only artifacts, never other roles' transcripts.
 
@@ -188,7 +188,7 @@ export async function runRole(role: RoleConfig, item: WorkItem): Promise<Artifac
       skills: role.skills,
       maxTurns: role.maxTurns,
       maxBudgetUsd: role.maxBudgetUsd,
-      outputFormat: { type: "json_schema", schema: z.toJSONSchema(role.schema) },
+      outputFormat: { type: "json_schema", schema: z.toJSONSchema(role.schema, { target: "draft-07" }) }, // the CLI rejects 2020-12
       hooks: { PreToolUse: [{ matcher: "Edit|Write|NotebookEdit", hooks: [guardPaths] }] },
     },
   })) {
