@@ -85,11 +85,11 @@ Depends on `add-role-runner` (sections 1–6). Orchestrator tests use an in-memo
 
 ## 8. Exit run
 
-- [ ] 8.1 Run `pnpm factory run --issue <n> --until proposal` against the owner's test issue. Confirm that:
+- [x] 8.1 Run `pnpm factory run --issue <n> --until proposal` against the owner's test issue. Confirm that:
   - the branch has a change that passes `openspec validate --strict`
   - the issue has the summary comment
   - `pnpm factory cost` shows tokens, an estimated cost and `subscription` as the auth mode
   - a second run does nothing
 
   Record the results in the M1 PR description.
-- [ ] 8.2 Update `CLAUDE.md` with the `db:up`, `factory` and `test:live` commands and the new packages.
+- [x] 8.2 Update `CLAUDE.md` with the `db:up`, `factory` and `test:live` commands and the new packages.
