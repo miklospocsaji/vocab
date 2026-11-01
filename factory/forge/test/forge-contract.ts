@@ -17,6 +17,8 @@ export interface ContractHarness {
   forge: Forge;
   defaultBranch: string;
   defaultSha: string;
+  /** A sha other than `defaultSha` that `setBranch` accepts (a real commit, for a git-backed forge). */
+  otherSha: string;
   /** Seeds an issue on the forge's side. */
   addIssue(issue: ContractIssue): void;
   /** Seeds a branch head on the forge's side. */
@@ -26,8 +28,6 @@ export interface ContractHarness {
   /** The branch head the forge holds, or undefined. */
   branchSha(branch: string): string | undefined;
 }
-
-const OTHER_SHA = "1111111111111111111111111111111111111111";
 
 export function describeForgeContract(name: string, setup: () => ContractHarness): void {
   describe(`${name} meets the Forge contract`, () => {
@@ -97,7 +97,7 @@ export function describeForgeContract(name: string, setup: () => ContractHarness
     describe("branchExists", () => {
       it("is true for the default branch and a pushed branch, false otherwise", async () => {
         const h = setup();
-        h.setBranch("fix-something", OTHER_SHA);
+        h.setBranch("fix-something", h.otherSha);
 
         expect(await h.forge.branchExists(h.defaultBranch)).toBe(true);
         expect(await h.forge.branchExists("fix-something")).toBe(true);
@@ -119,12 +119,12 @@ export function describeForgeContract(name: string, setup: () => ContractHarness
 
       it("is a no-op if the branch exists, leaving its head where it is", async () => {
         const h = setup();
-        h.setBranch("add-import-kindle-vocab-db", OTHER_SHA);
+        h.setBranch("add-import-kindle-vocab-db", h.otherSha);
 
         const result = await h.forge.createBranch("add-import-kindle-vocab-db");
 
-        expect(result).toEqual({ created: false, sha: OTHER_SHA });
-        expect(h.branchSha("add-import-kindle-vocab-db")).toBe(OTHER_SHA);
+        expect(result).toEqual({ created: false, sha: h.otherSha });
+        expect(h.branchSha("add-import-kindle-vocab-db")).toBe(h.otherSha);
       });
 
       it("is a no-op the second time it is called for a branch", async () => {

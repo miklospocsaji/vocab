@@ -2,11 +2,14 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeForge } from "../src/testing.ts";
 import { describeForgeContract } from "./forge-contract.ts";
 
 const DEFAULT_SHA = "fedcba9876543210fedcba9876543210fedcba98";
+
+const git = (cwd: string, ...args: string[]) =>
+  execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd, encoding: "utf8" }).trim();
 
 describeForgeContract("FakeForge", () => {
   const forge = new FakeForge({ defaultBranch: "master", defaultSha: DEFAULT_SHA });
@@ -14,6 +17,7 @@ describeForgeContract("FakeForge", () => {
     forge,
     defaultBranch: "master",
     defaultSha: DEFAULT_SHA,
+    otherSha: "1111111111111111111111111111111111111111",
     addIssue: (issue) => {
       forge.addIssue(issue);
     },
@@ -23,6 +27,55 @@ describeForgeContract("FakeForge", () => {
     comments: (n) => forge.comments.filter((c) => c.issueNumber === n).map((c) => c.body),
     branchSha: (branch) => forge.branchSha(branch),
   };
+});
+
+describe("FakeForge with a git remote", () => {
+  let root: string;
+
+  beforeAll(() => {
+    vi.stubEnv("GIT_CONFIG_GLOBAL", "/dev/null");
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    root = realpathSync(mkdtempSync(join(tmpdir(), "factory-fake-forge-remote-")));
+  });
+
+  afterAll(() => {
+    vi.unstubAllEnvs();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  let n = 0;
+  describeForgeContract("FakeForge with a git remote", () => {
+    // A fresh bare repo per test, holding two real commits: master's head and another.
+    const remote = join(root, `remote-${String(++n)}.git`);
+    git(root, "init", "--bare", "-b", "master", remote);
+    const tree = git(remote, "mktree", "--missing");
+    const defaultSha = git(remote, "commit-tree", tree, "-m", "initial");
+    const otherSha = git(remote, "commit-tree", tree, "-p", defaultSha, "-m", "other");
+    git(remote, "update-ref", "refs/heads/master", defaultSha);
+
+    const forge = new FakeForge({ remote });
+    return {
+      forge,
+      defaultBranch: "master",
+      defaultSha,
+      otherSha,
+      addIssue: (issue) => {
+        forge.addIssue(issue);
+      },
+      setBranch: (branch, sha) => {
+        forge.setBranch(branch, sha);
+      },
+      comments: (issueNumber) => forge.comments.filter((c) => c.issueNumber === issueNumber).map((c) => c.body),
+      // Read from git itself, not through the forge under test.
+      branchSha: (branch) => {
+        try {
+          return git(remote, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`);
+        } catch {
+          return undefined;
+        }
+      },
+    };
+  });
 });
 
 describe("FakeForge", () => {
@@ -35,9 +88,6 @@ describe("FakeForge", () => {
 
   describe("pushBranch", () => {
     let root: string;
-
-    const git = (cwd: string, ...args: string[]) =>
-      execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd, encoding: "utf8" }).trim();
 
     beforeEach(() => {
       vi.stubEnv("GIT_CONFIG_GLOBAL", "/dev/null");

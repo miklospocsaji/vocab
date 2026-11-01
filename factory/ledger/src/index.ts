@@ -5,10 +5,12 @@ export {
   ChangeIdTaken,
   closeAttempt,
   createWorkItem,
+  findWorkItemByChangeId,
   findWorkItemByIssue,
   listAttempts,
   listMessages,
   openAttempt,
+  setWorkItemState,
   workItemCost,
 } from "./queries.ts";
 export type { AttemptEnd, AttemptOutcome, AttemptRow, AuthMode, MessageRow, NewAttempt, NewWorkItem, WorkItemRow } from "./queries.ts";

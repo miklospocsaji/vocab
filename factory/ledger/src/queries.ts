@@ -184,6 +184,21 @@ export async function findWorkItemByIssue(db: Db, issueNumber: number): Promise<
   return rows[0] === undefined ? undefined : toWorkItem(rows[0]);
 }
 
+export async function findWorkItemByChangeId(db: Db, changeId: string): Promise<WorkItemRow | undefined> {
+  const { rows } = await db.query<WorkItemRecord>(`SELECT ${WORK_ITEM_COLUMNS} FROM work_items WHERE change_id = $1`, [changeId]);
+  return rows[0] === undefined ? undefined : toWorkItem(rows[0]);
+}
+
+/** Moves the work item to `state` and returns it; a missing work item is an error. */
+export async function setWorkItemState(db: Db, workItemId: string, state: string): Promise<WorkItemRow> {
+  const { rows } = await db.query<WorkItemRecord>(
+    `UPDATE work_items SET state = $2, updated_at = now() WHERE id = $1 RETURNING ${WORK_ITEM_COLUMNS}`,
+    [workItemId, state],
+  );
+  if (rows[0] === undefined) throw new Error(`work item ${workItemId} not found`);
+  return toWorkItem(rows[0]);
+}
+
 /** Opens the next attempt for the work item's state, numbered from 1. */
 export async function openAttempt(db: Db, attempt: NewAttempt): Promise<AttemptRow> {
   const { rows } = await db.query<AttemptRecord>(

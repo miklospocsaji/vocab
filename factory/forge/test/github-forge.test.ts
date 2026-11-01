@@ -35,6 +35,7 @@ describeForgeContract("GitHubForge", () => {
     forge,
     defaultBranch: DEFAULT_BRANCH,
     defaultSha: DEFAULT_SHA,
+    otherSha: "1111111111111111111111111111111111111111",
     addIssue: (i) => api.issues.set(i.number, i),
     setBranch: (branch, sha) => api.branches.set(branch, sha),
     comments: (n) => api.comments.get(n) ?? [],

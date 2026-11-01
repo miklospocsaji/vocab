@@ -53,10 +53,10 @@ Depends on `add-role-runner` (sections 1–6). Orchestrator tests use an in-memo
 
 ## 6. Intake and Proposal handlers
 
-- [ ] 6.1 Failing tests for Intake. Scenarios:
+- [x] 6.1 Failing tests for Intake. Scenarios:
   - Work item and branch are created
   - Issue without a requirement is rejected
-- [ ] 6.2 Write the `intake` handler `(ctx, item) => Promise<Transition>`.
+- [x] 6.2 Write the `intake` handler `(ctx, item) => Promise<Transition>`.
 - [ ] 6.3 Failing tests for Proposal, with the fake role runner. Scenarios:
   - Valid proposal is committed and pushed
   - Invalid proposal is retried with evidence
