@@ -27,7 +27,7 @@ Depends on `add-role-runner` (sections 1–6). Orchestrator tests use an in-memo
 
 ## 3. Change ids (pure)
 
-- [ ] 3.1 Failing tests. Scenarios:
+- [x] 3.1 Failing tests. Scenarios:
   - Leading verb is kept
   - Colliding id gets a suffix
 
@@ -36,7 +36,7 @@ Depends on `add-role-runner` (sections 1–6). Orchestrator tests use an in-memo
   - punctuation and accents collapse to single hyphens
   - the 40-character cut falls at a word boundary
   - the suffix stays within 40 characters
-- [ ] 3.2 Write `deriveChangeId(title, isTaken)` in `factory/orchestrator/src/change-id.ts`. An id is taken if it exists in the ledger or as a remote branch.
+- [x] 3.2 Write `deriveChangeId(title, isTaken)` in `factory/orchestrator/src/change-id.ts`. An id is taken if it exists in the ledger or as a remote branch.
 
 ## 4. Forge
 
@@ -45,11 +45,11 @@ Depends on `add-role-runner` (sections 1–6). Orchestrator tests use an in-memo
 
 ## 5. Worktrees and git
 
-- [ ] 5.1 Failing tests against a temp bare remote:
+- [x] 5.1 Failing tests against a temp bare remote:
   - a worktree is created under `$FACTORY_HOME/worktrees/<change-id>` (default `~/.factory`) and reused on re-run
   - a commit includes only the change folder
   - the push reaches the remote
-- [ ] 5.2 Write `factory/orchestrator/src/git.ts`.
+- [x] 5.2 Write `factory/orchestrator/src/git.ts`.
 
 ## 6. Intake and Proposal handlers
 
