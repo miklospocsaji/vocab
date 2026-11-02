@@ -10,7 +10,7 @@ We are building an autonomous software factory first and a vocabulary app second
 
 - Build agent roles with the Claude Agent SDK (TypeScript): hooks, subagents, sessions, permissions, structured outputs.
 - Orchestrate them durably: retries, timers, human-approval signals, replayable state.
-- Run agents safely: sandboxed workers, egress control, short-lived credentials.
+- Run agents safely: sandboxed workers, short-lived credentials.
 - Measure the factory itself: success rate, cost, wall time and human interventions per work item.
 
 **Instructions to Claude Code**
@@ -51,17 +51,17 @@ Inside the build loop a failing gate goes to the classifier: bugs retry the task
 | Component | Responsibility | Implementation |
 | --- | --- | --- |
 | Forge adapter | Read issues, post comments, open and merge PRs, receive webhooks | GitHub App + `@octokit`, behind a `Forge` interface |
-| Intake | Turn a webhook into a work item and start an execution | API Gateway + Lambda |
-| Orchestrator | The work-item state machine: order, retries, waits, budgets, the per-task loop | Step Functions (Standard, JSONata), defined in CDK; states pass S3 pointers, never artifacts (256 KB payload limit) |
-| Factory worker | One container image that runs any role | Node + Agent SDK + OpenSpec CLI + git + Playwright, on ECS Fargate |
+| Intake | Turn a webhook into an execution, whose first state creates the work item | One Lambda behind a Function URL, outside the VPC; it never touches the ledger |
+| Orchestrator | The work-item state machine: order, retries, waits, budgets, the per-task loop | Step Functions (Standard, JSONata), defined in CDK; states pass ids and pointers, never artifacts (256 KB payload limit) |
+| Factory worker | One container image that runs every state, including any role, and is the only component that touches the ledger | Node + Agent SDK + OpenSpec CLI + git (Playwright from M4), on ECS Fargate |
 | Role runner | Loads role config, runs the agent, validates the output | TypeScript in `factory/roles/` |
 | Spec tooling | Validate and archive OpenSpec changes | `openspec` CLI, called by the deterministic runner |
 | Gates | Typecheck, lint, unit, e2e, contract checks, `openspec validate`, scenario coverage | Deterministic scripts run in the worker, never by an agent |
 | Deployer | Per-PR preview stack, production release | CDK deploy, deterministic |
-| Ledger | Work items, attempts, artifacts, costs, events | Postgres on a dedicated Aurora Serverless v2 cluster with auto-pause, separate from the app's; JSON results in S3 |
-| Approvals | Pause for owner decisions and resume | Step Functions `waitForTaskToken`, resumed by a PR/issue comment command |
+| Ledger | Work items, attempts, artifacts, costs, events | Postgres on a dedicated Aurora Serverless v2 cluster with auto-pause, separate from the app's; JSON results in the ledger in M2, in S3 from M3 |
+| Approvals | Pause for owner decisions and resume | Step Functions `waitForTaskToken`, with the token in the ledger; a PR/issue comment command starts a worker task that resumes it |
 | Console | One page per work item: state, tasks, attempts, cost, links | Small read-only web page over the ledger (milestone 6) |
-| Secrets | Model key, GitHub App key | AWS Secrets Manager, injected per task |
+| Secrets | Model key, GitHub App key, webhook secret, ledger credentials | SSM Parameter Store SecureStrings (free); Secrets Manager only for the generated ledger credentials; injected per task |
 
 ### Work-item states
 
@@ -103,7 +103,7 @@ The scenarios in the delta specs are the acceptance criteria. Each test names th
 
 Factory capabilities are built through OpenSpec changes too, scoped per milestone. A change holds only what its milestone builds and is archived when that milestone exits, so `openspec/specs/` never describes behaviour that does not exist yet.
 
-Results OpenSpec has no place for are small JSON artifacts with zod schemas in `factory/artifacts/`, stored in S3 by work item and attempt. They never go in the change folder.
+Results OpenSpec has no place for are small JSON artifacts with zod schemas in `factory/artifacts/`, stored in S3 by work item and attempt (in M2, the single result sits in the ledger on its attempt). They never go in the change folder.
 
 | Artifact | Produced by | Consumed by |
 | --- | --- | --- |
@@ -213,7 +213,7 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 | Language | TypeScript 6.0 (strict) everywhere, Node 24 LTS. TypeScript 7 waits until typescript-eslint supports it. |
 | Package manager | pnpm workspaces; exact versions pinned for the Agent SDK (0.x) and the OpenSpec CLI |
 | Lint | ESLint (flat config) + typescript-eslint |
-| Agents | `@anthropic-ai/claude-agent-sdk`; `@anthropic-ai/sdk` for the classifier and Batch API calls; Anthropic API key in Secrets Manager |
+| Agents | `@anthropic-ai/claude-agent-sdk`; `@anthropic-ai/sdk` for the classifier and Batch API calls; Anthropic API key in SSM Parameter Store |
 | Specs and tasks | OpenSpec (`@fission-ai/openspec`): CLI in the worker image and locally, as a repo dev dependency; changes under `openspec/changes/` |
 | Orchestration | AWS Step Functions (Standard workflows, JSONata), Map state for the per-task loop |
 | Agent compute | ECS Fargate tasks from one `factory-worker` image in ECR |
@@ -267,15 +267,15 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 
 ### Environments
 
-- **Factory:** one long-lived stack (Step Functions, Fargate cluster, ledger, intake API).
+- **Factory:** one long-lived stack (Step Functions, Fargate cluster, ledger, webhook Lambda).
 - **Preview:** one app stack per open PR, named `pr-<number>`, destroyed on merge or close.
 - **Production:** one app stack, deployed only by the Release state.
 - **Region:** every stack lives in eu-central-1. The one exception is a small certificate stack in us-east-1 for the CloudFront certificates, referenced with CDK cross-region references.
 
 ### Security
 
-- Worker tasks run in private subnets. Egress goes through one small NAT instance running a domain-allowlist proxy: Anthropic API, GitHub, npm registry, the preview URL. Nothing else. S3 and DynamoDB are reached through free gateway endpoints. A NAT Gateway (about $38/month) or Network Firewall would not fit the budget. The trade-off is a single AZ with no high availability, which is acceptable for the factory.
-- Each task gets a short-lived GitHub App installation token scoped to this repo, and no AWS credentials beyond reading its inputs and writing its artifacts. Deploys use a separate deployer role that agents never hold.
+- Worker tasks run in the public subnets of a small VPC, with a public IP and no inbound access. Aurora has no public address and accepts connections only from the worker. There is no network-level egress control (owner decision, section 8): the Bash allowlist and sandbox, per-role `WebFetch` domain rules, a read guard and a spend-limited API key limit what an agent can reach and leak.
+- Each task gets a short-lived GitHub App installation token scoped to this repo, and no AWS credentials beyond reporting to its own execution and, from M3, reading its inputs and writing its artifacts. Deploys use a separate deployer role that agents never hold.
 - Agent-visible content from issues, web pages or the app under test is data, never instructions. Role prompts say so, and hooks, permission rules and the sandbox enforce the path and command allowlists regardless.
 - No factory role may change factory infrastructure (`infra/factory-stack.ts` and its constructs) through a work item. It changes only through the owner or a local Claude Code session.
 - Monthly AWS budget alarm and a per-work-item token budget; exceeding either pauses the execution and notifies the owner.
@@ -350,7 +350,7 @@ Eight milestones, each ending in a working end-to-end path; app features enter a
    - Deliverables: `Forge` interface + GitHub implementation; role runner; proposal-author role; zod schema for its JSON result; a local ledger (Postgres in Docker); CLI `pnpm factory run --issue <n> --until proposal`.
    - Exit: running the CLI against a real issue creates a branch with an OpenSpec change that passes `openspec validate --strict`, posts a summary as an issue comment, and records cost in the ledger.
 3. **M2 Cloud skeleton**
-   - Deliverables: `factory-worker` image; factory CDK stack (intake API, Step Functions, Fargate, Secrets Manager, ledger); states Intake → Proposal → Proposal approval with `waitForTaskToken`; `/approve` comment command resumes it.
+   - Deliverables: `factory-worker` image; factory CDK stack (webhook Lambda, Step Functions, Fargate, secrets, ledger); states Intake → Proposal → Proposal approval with `waitForTaskToken`; `/approve` comment command resumes it.
    - Exit: labelling an issue `factory` produces a validated change within minutes; `/approve` moves the execution on; nothing runs on the laptop.
 4. **M3 Design, plan and build loop**
    - Deliverables: architect, design-reviewer, planner, test-author, implementer and failure-classifier roles; complexity routing (small skips design, medium gets the agent review, large waits for the owner); the per-task Map loop with gates, task ticking and retry with evidence (max 3); `design-flaw` routing back to Design and re-planning; scenario-coverage gate; PR opening by the deterministic runner.
@@ -379,14 +379,14 @@ Decided on 26–27 October 2026. Claude Code treats these as requirements and re
 - [x] **Toolchain (M0):** Node 24 LTS, TypeScript 6.0, ESLint + typescript-eslint. Revisit TypeScript 7 once typescript-eslint supports it.
 - [x] **OpenSpec change scope (M0):** per milestone. A change holds only what its milestone builds and is archived at that milestone's exit.
 - [x] **Implementer infrastructure scope (M3):** app and preview stacks only (`infra/app-stack.ts`, `infra/preview-stack.ts`, `infra/app/`). Factory infrastructure is never changed by a work item.
-- [x] **Worker egress (M2):** one t4g.nano NAT instance with a domain-allowlist proxy, plus S3/DynamoDB gateway endpoints. No NAT Gateway, no Network Firewall.
+- [x] **Worker egress (M2, changed 2 November 2026):** no egress control. The owner removed the domain-allowlist proxy and the learning goal, and accepts the risk. Workers use public subnets and reach the internet directly. No NAT instance, NAT Gateway or Network Firewall.
 - [ ] **Preview database (M4):** a full Aurora cluster per PR is slow (about 10 minutes) and costly. Recommendation: previews share the app cluster with one database per PR, dropped when the PR closes.
 - [x] **Model billing (M1):** local runs use the subscription's Agent SDK credit; cloud runs (M2 onwards) use an Anthropic API key. The role runner supports both auth modes by config, and the ledger records which mode each run used, since subscription runs have no exact per-call price (record tokens, estimate cost).
 - [x] **Ledger store (M0):** a dedicated Aurora Serverless v2 Postgres cluster with auto-pause, separate from the app's.
 - [x] **Capabilities (M0):** app: `vocab-import`, `trajectories`, `enrichment`, `practice`, `auth`. Factory: `orchestration`, `roles`, `gates`. The factory capabilities are specified in OpenSpec from M0, so Claude Code builds the factory through OpenSpec changes too.
 - [x] **Complexity rules (M3):** small = one capability, no schema or contract change; medium = a contract or schema change within one capability; large = several capabilities, new infrastructure, or anything touching auth or security.
 - [x] **Auto-merge policy (M4):** small changes merge themselves on green gates, an approving review and a clean QA report; medium and large changes wait for the owner.
-- [x] **Budget limits (M2):** $50 a month AWS budget alarm; $10 model spend per work item.
+- [x] **Budget limits (M2, changed 2 November 2026):** $50 a month AWS budget alarm, covering the whole shared AWS account; $20 a month Anthropic workspace limit; $5 model spend per work item.
 - [x] **Languages (M3):** English → Hungarian first; the enrichment eval set starts with this pair.
 - [x] **Users (M4):** owner only. Admin-created Cognito users, no sign-up page; the data model stays multi-user.
 - [x] **Fixture data (M0):** an anonymised copy in git, produced by a committed script that keeps the structure and real sentences from a few books and strips device IDs and ASINs.
