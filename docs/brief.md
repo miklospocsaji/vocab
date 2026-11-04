@@ -10,7 +10,7 @@ We are building an autonomous software factory first and a vocabulary app second
 
 - Build agent roles with the Claude Agent SDK (TypeScript): hooks, subagents, sessions, permissions, structured outputs.
 - Orchestrate them durably: retries, timers, human-approval signals, replayable state.
-- Run agents safely: sandboxed workers, short-lived credentials.
+- Run agents safely: confined workers, short-lived credentials.
 - Measure the factory itself: success rate, cost, wall time and human interventions per work item.
 
 **Instructions to Claude Code**
@@ -123,7 +123,7 @@ Ten roles, each defined by one config file in `factory/roles/<role>.yaml` plus a
 
 | Role | Default model | Tools | May write | Output | Turn cap |
 | --- | --- | --- | --- | --- | --- |
-| Proposal author | `claude-opus-5-5` | Read, Grep, Glob, Edit, Write, WebFetch, Bash (`openspec` only) | `openspec/changes/<id>/` except `design.md` and `tasks.md` | `proposal.md`, delta specs, `x-complexity` tag | 30 |
+| Proposal author | `claude-opus-5-5` | Read, Grep, Glob, Edit, Write, WebFetch (GitHub only) | `openspec/changes/<id>/` except `design.md` and `tasks.md` | `proposal.md`, delta specs, `x-complexity` tag | 30 |
 | Architect | `claude-opus-5-5` | Read, Grep, Glob, Edit, Write | `openspec/changes/<id>/design.md`, `app/contracts/` | `design.md`, contracts | 40 |
 | Design reviewer | `claude-sonnet-5-5` | Read, Grep, Glob | nothing | `review.json` | 20 |
 | Planner | `claude-sonnet-5-5` | Read, Grep, Glob, Edit, Write | `openspec/changes/<id>/tasks.md` | `tasks.md`, `tasks.json` | 25 |
@@ -274,7 +274,7 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 
 ### Security
 
-- Worker tasks run in the public subnets of a small VPC, with a public IP and no inbound access. Aurora has no public address and accepts connections only from the worker. There is no network-level egress control (owner decision, section 8): the Bash allowlist and sandbox, per-role `WebFetch` domain rules, a read guard and a spend-limited API key limit what an agent can reach and leak.
+- Worker tasks run in the public subnets of a small VPC, with a public IP and no inbound access. Aurora has no public address and accepts connections only from the worker. There is no network-level egress control (owner decision, section 8): the Bash allowlist, per-role `WebFetch` domain rules, a read guard and a spend-limited API key limit what an agent can reach and leak. The SDK's Bash sandbox cannot start in a container with no added privileges (ADR 0007), so in M2 the proposal author has no Bash. M3 decides how its Bash roles run safely.
 - Each task gets a short-lived GitHub App installation token scoped to this repo, and no AWS credentials beyond reporting to its own execution and, from M3, reading its inputs and writing its artifacts. Deploys use a separate deployer role that agents never hold.
 - Agent-visible content from issues, web pages or the app under test is data, never instructions. Role prompts say so, and hooks, permission rules and the sandbox enforce the path and command allowlists regardless.
 - No factory role may change factory infrastructure (`infra/factory-stack.ts` and its constructs) through a work item. It changes only through the owner or a local Claude Code session.

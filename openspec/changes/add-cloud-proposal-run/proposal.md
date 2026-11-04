@@ -2,7 +2,7 @@
 
 ## Why
 
-M2 is the cloud skeleton (brief, section 7). The same Intake and Proposal handlers that M1 runs from the CLI must run in AWS, started by a GitHub label and paused for the owner's approval. This proves durable orchestration, the sandboxed worker and short-lived credentials end to end, before M3 adds the build loop. The owner chose the simplest infrastructure that does this (2026-11-02): no egress control, and only the worker touches the ledger.
+M2 is the cloud skeleton (brief, section 7). The same Intake and Proposal handlers that M1 runs from the CLI must run in AWS, started by a GitHub label and paused for the owner's approval. This proves durable orchestration, the containerised worker and short-lived credentials end to end, before M3 adds the build loop. The owner chose the simplest infrastructure that does this (2026-11-02): no egress control, and only the worker touches the ledger.
 
 ## What Changes
 

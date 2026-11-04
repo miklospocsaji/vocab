@@ -50,8 +50,8 @@ Unit tests run in `pnpm check` with fakes for GitHub and AWS and the real local 
 
 ### Deploy and verify the boundary
 
-- [ ] 2.7 Failing cloud test in `factory/roles/test/boundaries.cloud.test.ts`, which runs the worker task definition as a one-off Fargate task with a command override running the boundary live tests. Scenario: Boundaries hold in Fargate (api-key mode, budget under $0.10).
-- [ ] 2.8 Confirm with the owner, then `pnpm infra:deploy`. Run `pnpm test:cloud` for task 2.7 and record the result in `design.md`. If the sandbox fails on Fargate, stop and take the `add-factory-worker` open question to the owner.
+- [ ] 2.7 Failing cloud test in `factory/roles/test/boundaries.cloud.test.ts`, which runs the worker task definition as a one-off Fargate task with a command override running the boundary live tests. Scenario: Boundaries hold in Fargate (api-key mode, budget under $0.10). Also run `bwrap` in the task and record whether it can start, as input to M3. A failure there does not fail M2.
+- [ ] 2.8 Confirm with the owner, then `pnpm infra:deploy`. Run `pnpm test:cloud` for task 2.7 and record the result in `design.md`.
 
 ## Step 3: State machine and Lambda
 

@@ -114,7 +114,7 @@ No changes in `app/contracts/`.
 
 ## Decisions that need an ADR
 
-- **0008 No worker egress control:** the owner's decision of 2026-11-02 and why (complexity and cost for a pet project), what limits an agent instead (Bash allowlist and sandbox, `WebFetch` domain rules, read guard, spend-limited key), the accepted risk, and the proxy design it replaces, in case it is ever wanted. Written in task 2.1.
+- **0008 No worker egress control:** the owner's decision of 2026-11-02 and why (complexity and cost for a pet project), what limits an agent instead (no Bash for the proposal author, `WebFetch` domain rules, read guard, spend-limited key), the accepted risk, and the proxy design it replaces, in case it is ever wanted. Written in task 2.1.
 - **0002 amendment:** every state runs as a worker task, so a worker, not a Lambda, stores the token, and `/approve` resumes through a worker task.
 - **0003 amendment:** no private subnets; JSON results in the ledger until M3.
 - **0009 GitHub App auth** and **0010 Worker image** come from `add-factory-worker`.
@@ -142,4 +142,4 @@ No changes in `app/contracts/`.
 - **The factory shares an AWS account with the owner's other projects (owner decision, 2026-11-02).** The budget alarm counts their spend too, so it does not measure the factory alone. It only alerts, and stops nothing. The per-work-item cost comes from the ledger, not from the budget. The stack's IAM policies are scoped to its own resources, and the worker's task role can only report to its own state machine.
 - **Ledger reads from the laptop.** Aurora has no public address, so `pnpm factory cost` can't reach it. The summary comment carries the cost in M2.
 - **Aurora resume latency** (about 15 s) slows the first step after an idle period. The connection retry covers it.
-- **Fargate sandbox support.** The local spike in `add-factory-worker` is necessary but not sufficient. "Boundaries hold in Fargate" is checked in task 2.8, before any role runs there for real.
+- **Role boundaries on Fargate.** "Boundaries hold in Fargate" is checked in task 2.8, before any role runs there for real. The same task records whether the SDK sandbox can start on Fargate, as input to M3's decision on Bash (see `add-factory-worker`).

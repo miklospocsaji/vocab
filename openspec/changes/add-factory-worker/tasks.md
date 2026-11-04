@@ -8,14 +8,14 @@ Unit tests run in `pnpm check` and need only the local ledger. Docker tests (`*.
 
 ### Decisions and spike
 
-- [ ] 1.1 Spike, with no production code: build a draft image (Node 24 slim, git, bubblewrap, socat, the pinned SDK) and run one Haiku session with the ADR 0007 sandbox options under `docker run` with the default seccomp profile and no added capabilities. Check:
+- [x] 1.1 Spike, with no production code: build a draft image (Node 24 slim, git, bubblewrap, socat, the pinned SDK) and run one Haiku session with the ADR 0007 sandbox options under `docker run` with the default seccomp profile and no added capabilities. Check:
   - that the sandbox starts with `failIfUnavailable: true`
   - that a Bash write into the worktree fails
   - that the sandbox's network proxy blocks an outbound connection from a sandboxed command
 
   Budget under $0.05, in subscription mode. Record the findings in `design.md`. If the sandbox does not start, stop and ask the owner to choose among the options in Open questions.
-- [ ] 1.2 Write ADR 0009 "GitHub App auth": App permissions and events, the private key held by the worker, key rotation, the bot identity, the webhook secret, and who may `/approve`. Amend ADR 0006 with `FACTORY_AUTH_MODE`.
-- [ ] 1.3 Write ADR 0010 "Worker image" from the spike: base and digest pin, `linux/amd64`, contents, non-root user, how the image is built, tagged and pushed (CDK `DockerImageAsset`), and the sandbox result. Amend ADR 0007 if the spike changed the sandbox decision.
+- [x] 1.2 Write ADR 0009 "GitHub App auth": App permissions and events, the private key held by the worker, key rotation, the bot identity, the webhook secret, and who may `/approve`. Amend ADR 0006 with `FACTORY_AUTH_MODE`.
+- [x] 1.3 Write ADR 0010 "Worker image" from the spike: base and digest pin, `linux/amd64`, contents, non-root user, how the image is built, tagged and pushed (CDK `DockerImageAsset`), and the sandbox result. Amend ADR 0007 with the spike's findings and the owner's decision.
 
 ### Role runner
 
@@ -33,14 +33,16 @@ Unit tests run in `pnpm check` and need only the local ledger. Docker tests (`*.
   - Read through a symlink out of the worktree is denied
   - Reading inside the worktree is allowed
   - Three attempts stay within the work-item limit
+  - Proposal author cannot run commands
 
-  Also cover: Grep and Glob with and without `path`, and the config allowing `WebFetch` only with the two GitHub domain rules.
-- [ ] 1.8 Write `createReadGuard` and wire it into the runner. Update `proposal-author.yaml` and `.claude/agents/proposal-author.md` (GitHub-only `WebFetch`, `maxBudgetUsd: 1.5`).
-- [ ] 1.9 Live tests, budget under $0.10, in subscription mode. Scenarios:
-  - WebFetch outside GitHub is denied
-  - Reading a process environment is denied (against a real session)
+  Also cover: Grep and Glob with and without `path`, and the config allowing `WebFetch` only with the two GitHub domain rules. This replaces the Bash expectations in `factory/roles/test/proposal-author.test.ts`.
+- [ ] 1.8 Write `createReadGuard` and wire it into the runner. Update `proposal-author.yaml` and `.claude/agents/proposal-author.md`: no Bash, GitHub-only `WebFetch`, `maxBudgetUsd: 1.5`, and the OpenSpec structure stated in the prompt instead of the steps that ran `openspec`.
+- [ ] 1.9 Live tests, in subscription mode. Scenarios:
+  - WebFetch outside GitHub is denied (budget under $0.10)
+  - Reading a process environment is denied, against a real session (budget under $0.10)
+  - Proposal author produces a valid change without Bash (the existing proposal-author live test, budget $1.50 per attempt; record the number of attempts)
 
-  Also confirm that a fetch from `github.com` is still allowed.
+  Also confirm that a fetch from `github.com` is still allowed. The existing live tests "Non-allowlisted command is denied" and "Bash cannot write outside the role's paths" keep passing, through their throwaway probe roles.
 
 ### GitHub App Forge
 
@@ -68,4 +70,8 @@ Unit tests run in `pnpm check` and need only the local ledger. Docker tests (`*.
 
 - [ ] 1.14 Failing docker tests in `factory/worker/test/image.docker.test.ts`. Scenario: Worker image holds no secrets. They build the image from a temp copy of the repo with a dummy `.env.local` and `docs/vocab.db` added, then inspect the image. Also check that `factory-worker design --issue 1` in the container exits 2 with no network access (`--network none`).
 - [ ] 1.15 Write `factory/worker/Dockerfile` and `factory/worker/Dockerfile.dockerignore` following ADR 0010.
-- [ ] 1.16 Live check in the container. Scenario: Boundaries hold in the worker container. Run the three boundary live tests inside the image with `docker run` and no added capabilities, in subscription mode, with a budget under $0.10. Record the result in `design.md`.
+- [ ] 1.16 Live check in the container, with `docker run` and no added capabilities, in subscription mode, with a budget under $0.10. Scenarios:
+  - Boundaries hold in the worker container
+  - Missing sandbox blocks Bash (a throwaway probe role with Bash, inside the image)
+
+  Also confirm that the Grep tool works in the image without a system `ripgrep`. Record the results in `design.md`.

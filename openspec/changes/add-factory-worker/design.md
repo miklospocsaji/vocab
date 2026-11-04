@@ -9,8 +9,9 @@
   - `childEnv` becomes an allowlist: `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_*`, `TZ`, `NODE_EXTRA_CA_CERTS`, plus `OPENSPEC_TELEMETRY=0` and the credential of the effective mode.
   - The effective auth mode is `FACTORY_AUTH_MODE` if set, otherwise `role.authMode`. An invalid value throws an `AttemptFailed("config")` before `query()` is called.
   - A second `PreToolUse` hook on `Read|Grep|Glob`.
+  - The sandbox options stay as they are for any role with Bash. The proposal author has none, so they do not affect it.
 - `factory/roles/src/guard.ts`: `createReadGuard({ role, worktree })` shares the path resolution of the write guard. `Read` targets `file_path`; `Grep` and `Glob` target their optional `path`, which defaults to the worktree. The worktree root itself is allowed.
-- `factory/roles/proposal-author.yaml`: `allow` replaces `WebFetch` with `WebFetch(domain:github.com)` and `WebFetch(domain:raw.githubusercontent.com)`; `maxBudgetUsd` becomes 1.5. The prompt says GitHub only.
+- `factory/roles/proposal-author.yaml`: `allow` replaces `WebFetch` with `WebFetch(domain:github.com)` and `WebFetch(domain:raw.githubusercontent.com)`; `maxBudgetUsd` becomes 1.5; `tools` and `allow` lose Bash and its four `openspec` rules. The prompt says GitHub only, drops the steps that ran `openspec`, and states the expected structure of `proposal.md` and delta specs directly, taken from `openspec instructions` at the pinned version. An OpenSpec upgrade re-checks that text.
 - `factory/forge`:
   - `src/github-app.ts`: `createInstallationTokenProvider({ appId, installationId, privateKey, repository, fetch })`. It signs an RS256 JWT with `node:crypto` (`iat` 60 s in the past, `exp` 9 minutes ahead), calls `POST /app/installations/{id}/access_tokens` with `repositories` and `permissions`, and caches the token until five minutes before `expires_at`.
   - `GitHubForge` takes `token: string | (() => Promise<string>)`. The local CLI keeps passing the `gh auth token` string. The credential helper reads the token from the environment of each `git push`, as in M1.
@@ -33,9 +34,9 @@
 
   The state machine routes on these, because in the simplified design nothing else reads the ledger on its behalf.
 
-## Image (ADR 0010, after the spike)
+## Image (ADR 0010)
 
-- Base `node:24-bookworm-slim`, pinned by digest. Adds `git`, `bubblewrap`, `socat` and `ca-certificates` from Debian, and the RDS CA bundle for TLS to Aurora.
+- Base `node:24-bookworm-slim`, pinned by digest. Adds `git` and `ca-certificates` from Debian, and the RDS CA bundle for TLS to Aurora. No `bubblewrap` or `socat`: no role in the image uses Bash yet.
 - Platform `linux/amd64`. The laptop is x86_64, so the image is built natively, and the spike runs on the same platform as Fargate. arm64 would save about 20% on Fargate minutes, which is cents a month at this volume.
 - The factory runs `.ts` files directly with Node's type stripping, which refuses files under `node_modules`. So the image holds the workspace layout (root manifests, `factory/*`, `.claude/agents`, `openspec/config.yaml`) and runs `pnpm install --frozen-lockfile --prod` for the worker's dependency closure plus the pinned OpenSpec CLI. `pnpm deploy` is not used, because it would copy the workspace packages into `node_modules`.
 - The ignore file is an allowlist: everything is excluded except the paths above. `.env*`, `docs/`, `app/fixtures/`, `.git` and `node_modules` never enter the build context.
@@ -45,7 +46,7 @@
 ## Decisions
 
 - **Allowlist, not denylist, for the session environment.** The M1 runner removes `ANTHROPIC_*` and `CLAUDE_CODE_*` and passes everything else. In Fargate, everything else would include `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI`, the GitHub token used for pushes and the database URL. An allowlist stops new variables from leaking by default.
-- **The read guard replaces what the proxy would have backstopped.** The session's own process must hold the API key. Without a guard, the `Read` tool could plausibly return `/proc/self/environ`, and nothing else would stop that value reaching a fetch. This is unverified, so a live test tries it. The guard covers the tools, and the Bash allowlist covers commands.
+- **The read guard replaces what the proxy would have backstopped.** The session's own process must hold the API key. Without a guard, the `Read` tool could plausibly return `/proc/self/environ`, and nothing else would stop that value reaching a fetch. This is unverified, so a live test tries it. The guard covers the tools, and the proposal author has no way to run commands.
 - **The worker holds the App's private key.** Each task mints its own installation token, with no broker Lambda. The key reaches the worker's process only, never a role session: the environment allowlist and read guard keep it out. If a task were compromised beyond those, the key would be exposed, so ADR 0009 records this as an accepted trade-off along with how to rotate the key.
 - **The JWT is signed with `node:crypto`.** It is about 30 lines, it avoids `@octokit/auth-app` and its dependency tree, and the token request is easy to assert against a fake API.
 - **Fresh clone per Proposal task.** Fargate tasks are ephemeral, so the worker clones the repository (`--filter=blob:none`) through the same credential helper as pushes. M1's `ensureWorktree` then adds the work item's worktree under the task's temp home.
@@ -60,7 +61,24 @@ The SDK sandbox on Linux uses bubblewrap, which needs unprivileged user namespac
 
 A local pass does not prove Fargate behaves the same. Fargate itself is checked in `add-cloud-proposal-run` (scenario "Boundaries hold in Fargate"), once a cluster exists.
 
-If the sandbox cannot run, the owner decides before ADR 0010 is written in task 1.3 (see Open questions).
+The sandbox could not run, so the owner decided before ADR 0010 was written (see below).
+
+### Spike findings (task 1.1, 2026-11-02, SDK 0.3.310, Docker on Linux, non-root user, no added capabilities)
+
+Base image `node:24-bookworm-slim`, digest `sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c`. Draft image about 1.2 GB (the design guessed 400 MB). All sessions used Haiku, about $0.005 in total.
+
+| Container settings | Sandbox options | Result |
+| --- | --- | --- |
+| Docker defaults | ADR 0007 | bubblewrap cannot start: "No permissions to create new namespace" |
+| Docker defaults | plus `enableWeakerNestedSandbox` | same failure |
+| seccomp unconfined only | none (bubblewrap directly) | user namespace works; bubblewrap fails: "Failed to make / slave" |
+| AppArmor unconfined only | none (bubblewrap directly) | no user namespace |
+| both unconfined | ADR 0007 | bubblewrap fails: "Can't mount proc" |
+| both unconfined | plus `enableWeakerNestedSandbox` | works: a write to the worktree fails with "Read-only file system", and `curl https://example.com` is denied by the sandbox's network proxy |
+
+- **The sandbox does not run under Docker's default settings.** Both seccomp and AppArmor block it. Fargate does not allow relaxing seccomp, so it very likely fails there too. That has not been tested on Fargate.
+- **The working combination has a cost.** `enableWeakerNestedSandbox` leaves the host's `/proc` readable by sandboxed commands, and it needs a host that allows unconfined containers.
+- **It fails closed, but not the way ADR 0007 says.** With `failIfUnavailable: true`, every Bash command fails with exit code 1, so nothing runs unconfined. The session itself carries on and ends with result `success`. ADR 0007 says the attempt fails; it does not. A role without working Bash can therefore still succeed, and the runner's own validation still applies.
 
 ## Contracts
 
@@ -69,20 +87,24 @@ No changes in `app/contracts/`.
 ## Decisions that need an ADR
 
 - **0009 GitHub App auth:** the App's permissions and events, the private key in the worker and why there is no broker, key rotation, the bot identity, the webhook secret, and who may `/approve`. Written in task 1.2, before the Forge code.
-- **0010 Worker image:** base and pinning, platform, contents, non-root user, how the image is built and tagged, and the sandbox result from the spike. Written in task 1.3, after the spike.
+- **0010 Worker image:** base and pinning, platform, contents, non-root user, how the image is built and tagged, and the sandbox result from the spike. Written in task 1.3.
 - **0006 amendment:** `FACTORY_AUTH_MODE` as the per-deployment override.
-- **0007 amendment,** only if the spike fails: what replaces the sandbox in the worker.
+- **0007 amendment:** the spike's findings, the corrected `failIfUnavailable` behaviour, and no Bash for the proposal author.
 
-## Open questions
+## Decided: no Bash for the proposal author (owner, 2026-11-04)
 
-- **If bubblewrap cannot run without privileges** (decided after the spike). With no network layer behind it, the proposal author's Bash would have no network block:
-  1. **The proposal author loses Bash in the worker** (recommended). The runner already validates the change with `openspec validate --strict` after the session, so the role only loses its own check-and-fix loop and may need more attempts. M3 roles that need Bash bring the question back.
-  2. **ECS on EC2 instead of Fargate** for the worker, with a custom seccomp profile. About $3–5 a month more, plus instance management.
-  3. **Run Bash commands only through the deterministic runner**, never inside the session. The cleanest boundary, but it changes the role model for M3.
+The owner considered four options after the spike and chose the first:
+1. **The proposal author loses Bash (chosen).** It applies locally too, so one config serves both. The runner already validates the change after the session, so the role only loses its own check-and-fix loop. It may need more attempts, which the exit run measures.
+2. Keep Bash on its allowlist with the sandbox off: rejected, because only the allowlist would stand between a session and the worker's secrets.
+3. ECS on EC2 with seccomp and AppArmor unconfined and `enableWeakerNestedSandbox`: rejected, because it costs more and undoes part of the simplified design.
+4. Only the deterministic runner runs commands: no new work in M2, where it amounts to option 1. It stays open for M3.
+
+**M3 must decide how the test author and implementer run code.** They need Bash, the sandbox probably does not run on Fargate, and there is no network layer behind it. An allowlist entry for `pnpm test` does not contain code the agent wrote. Task 2.7 of `add-cloud-proposal-run` records whether the sandbox starts on Fargate, as input to that decision.
 
 ## Risks
 
-- **No network layer behind the runner's checks (accepted by the owner, 2026-11-02).** A bug or a changed SDK default in the tool rules, the guard or the sandbox could let a prompt-injected session reach any host. The live boundary tests re-run on every SDK upgrade. Reconsider before M3, when roles run code they wrote.
+- **No network layer behind the runner's checks (accepted by the owner, 2026-11-02).** A bug or a changed SDK default in the tool rules or the guard could let a prompt-injected session reach any host. The live boundary tests re-run on every SDK upgrade. Reconsider before M3, when roles run code they wrote.
 - **What a leak would cost.** The API key sits in a dedicated workspace with a $20 monthly limit and can be revoked. The installation token lasts an hour and covers this repository only. The App's private key is the longest-lived secret; it can be rotated in the App's settings.
 - **Agent SDK behaviour in a container.** The CLI may write to `HOME` or need writable caches. `HOME` and `TMPDIR` point at ephemeral storage.
 - **The read guard could block something the SDK needs.** It applies to tool calls only, not to the CLI's own file access. The live tests catch a regression.
+- **More proposal attempts.** Without Bash the role cannot check its own work, and an invalid proposal costs another attempt, about $0.37 at M1's cost. The three attempts at $1.50 stay within the $5 limit. The exit run records how many attempts it took.

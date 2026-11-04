@@ -11,6 +11,21 @@ The runner SHALL support an `api-key` mode and a `subscription` mode, selected b
 - **WHEN** a role whose config selects `subscription` runs with `FACTORY_AUTH_MODE=api-key` and an API key in the environment
 - **THEN** the session receives the API key and no OAuth token, and the ledger records the attempt's auth mode as `api-key`
 
+### Requirement: Bash is limited to allowlisted commands
+For roles with Bash, the runner SHALL allow only commands matching the role's allowlist, and SHALL deny `git push` and network commands regardless of the allowlist. Bash SHALL run in a sandbox whose filesystem writes are limited to the role's writable paths. On a host where the sandbox cannot start, every Bash command SHALL fail, and none SHALL run outside the sandbox.
+
+#### Scenario: Non-allowlisted command is denied
+- **WHEN** a role whose allowlist is `openspec` only runs `curl https://example.com`
+- **THEN** the command does not run and the ledger records the denial
+
+#### Scenario: Bash cannot write outside the role's paths
+- **WHEN** an allowlisted command tries to write a file outside the role's writable paths
+- **THEN** the write fails and the file does not exist
+
+#### Scenario: Missing sandbox blocks Bash
+- **WHEN** a role with Bash runs an allowlisted command in a `factory-worker` container, where the sandbox cannot start
+- **THEN** the command fails with the sandbox's error, and its effect does not happen
+
 ## ADDED Requirements
 
 ### Requirement: Role sessions hold no factory credentials
@@ -39,6 +54,17 @@ The runner SHALL deny any Read, Grep or Glob call whose target, resolved against
 - **WHEN** a role reads `docs/brief.md` or searches the worktree root
 - **THEN** the call is not denied by the read guard
 
+### Requirement: Proposal author has no Bash
+The proposal author SHALL have no Bash tool, locally or in the worker. Its output SHALL be validated by the runner after the session, and a failed validation SHALL reach the next attempt as evidence.
+
+#### Scenario: Proposal author cannot run commands
+- **WHEN** the proposal author's config is loaded and a session starts
+- **THEN** Bash is not among the session's tools, and no `Bash` rule is in its pre-approved calls
+
+#### Scenario: Proposal author produces a valid change without Bash
+- **WHEN** the proposal author completes a real session for an issue
+- **THEN** the change passes `openspec validate --strict` within the three attempts
+
 ### Requirement: Proposal author fetches only from GitHub
 The proposal author's `WebFetch` SHALL be limited to `github.com` and `raw.githubusercontent.com`. A fetch of any other host SHALL be denied without prompting.
 
@@ -54,12 +80,12 @@ The proposal author's per-attempt budget multiplied by the maximum number of Pro
 - **THEN** its `maxBudgetUsd` times the maximum number of Proposal attempts is at most 5
 
 ### Requirement: Roles run in the factory worker image
-One container image, `factory-worker`, SHALL be able to run any role. It SHALL contain the factory's code at the commit it was built from, the pinned Agent SDK and OpenSpec CLI, git, and the SDK sandbox's dependencies. It SHALL run as a non-root user, and SHALL contain no secrets and no personal data. The role boundaries SHALL hold inside the image, in a container started with no added capabilities and the default seccomp profile.
+One container image, `factory-worker`, SHALL be able to run any role. It SHALL contain the factory's code at the commit it was built from, the pinned Agent SDK and OpenSpec CLI, and git. It SHALL run as a non-root user, and SHALL contain no secrets and no personal data. The role boundaries SHALL hold inside the image, in a container started with no added capabilities and the default seccomp profile.
 
 #### Scenario: Worker image holds no secrets
 - **WHEN** the `factory-worker` image is built from a checkout that contains `.env.local` and `docs/vocab.db`
 - **THEN** the image contains neither file, has no `.git` directory, and its default user is not root
 
 #### Scenario: Boundaries hold in the worker container
-- **WHEN** the boundary tests ("Non-allowlisted command is denied", "Bash cannot write outside the role's paths", "Write outside the allowed paths is denied") run inside a `factory-worker` container with no added capabilities
-- **THEN** they pass, with the sandbox enabled and `failIfUnavailable` set
+- **WHEN** the boundary tests ("Write outside the allowed paths is denied", "Reading a process environment is denied", "WebFetch outside GitHub is denied", "Proposal author cannot run commands") run inside a `factory-worker` container with no added capabilities
+- **THEN** they pass
