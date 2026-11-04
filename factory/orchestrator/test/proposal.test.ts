@@ -229,3 +229,10 @@ describe("proposal", () => {
     expect(remoteHead(CHANGE_ID)).toBe(branchHead);
   });
 });
+
+describe("proposal-author budget", () => {
+  it("Scenario: Three attempts stay within the work-item limit", async () => {
+    const role = await loadRole("proposal-author");
+    expect(role.maxBudgetUsd * MAX_PROPOSAL_ATTEMPTS).toBeLessThanOrEqual(5);
+  });
+});

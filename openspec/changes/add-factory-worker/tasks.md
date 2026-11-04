@@ -19,30 +19,30 @@ Unit tests run in `pnpm check` and need only the local ledger. Docker tests (`*.
 
 ### Role runner
 
-- [ ] 1.4 Create the `factory/worker` package (`@vocab/factory-worker`) with a typecheck script and a Vitest project. Add a `docker` Vitest project for `*.docker.test.ts` and a root `pnpm test:docker` script, and exclude docker tests from `pnpm test`.
-- [ ] 1.5 Failing tests for the runner, with a fake `query`. Scenarios:
+- [x] 1.4 Create the `factory/worker` package (`@vocab/factory-worker`) with a typecheck script and a Vitest project. Add a `docker` Vitest project for `*.docker.test.ts` and a root `pnpm test:docker` script, and exclude docker tests from `pnpm test`.
+- [x] 1.5 Failing tests for the runner, with a fake `query`. Scenarios:
   - Deployment overrides the configured mode
   - Mismatched auth mode fails fast (still holds with the override)
   - Factory credentials do not reach the role session
   - Credentials stay out of the ledger
 
   Also cover: an invalid `FACTORY_AUTH_MODE` fails the attempt before `query()` runs, and `PATH`, `HOME` and `OPENSPEC_TELEMETRY` still reach the session.
-- [ ] 1.6 Write the allowlisted `childEnv` and the auth-mode override in `factory/roles/src/runner.ts`.
-- [ ] 1.7 Failing unit tests for the read guard on a temp worktree, and for the proposal author's config. Scenarios:
+- [x] 1.6 Write the allowlisted `childEnv` and the auth-mode override in `factory/roles/src/runner.ts`.
+- [x] 1.7 Failing unit tests for the read guard on a temp worktree, and for the proposal author's config. Scenarios:
   - Reading a process environment is denied
   - Read through a symlink out of the worktree is denied
   - Reading inside the worktree is allowed
   - Three attempts stay within the work-item limit
   - Proposal author cannot run commands
 
-  Also cover: Grep and Glob with and without `path`, and the config allowing `WebFetch` only with the two GitHub domain rules. This replaces the Bash expectations in `factory/roles/test/proposal-author.test.ts`.
-- [ ] 1.8 Write `createReadGuard` and wire it into the runner. Update `proposal-author.yaml` and `.claude/agents/proposal-author.md`: no Bash, GitHub-only `WebFetch`, `maxBudgetUsd: 1.5`, and the OpenSpec structure stated in the prompt instead of the steps that ran `openspec`.
+  Also cover: Grep and Glob with and without `path`, Glob patterns that leave the worktree, and the config allowing `WebFetch` only with the two GitHub domain rules. This replaces the Bash expectations in `factory/roles/test/proposal-author.test.ts`.
+- [x] 1.8 Write `createReadGuard` and wire it into the runner. Update `proposal-author.yaml` and `.claude/agents/proposal-author.md`: no Bash, GitHub-only `WebFetch`, `maxBudgetUsd: 1.5`, and the OpenSpec structure stated in the prompt instead of the steps that ran `openspec`.
 - [ ] 1.9 Live tests, in subscription mode. Scenarios:
   - WebFetch outside GitHub is denied (budget under $0.10)
   - Reading a process environment is denied, against a real session (budget under $0.10)
   - Proposal author produces a valid change without Bash (the existing proposal-author live test, budget $1.50 per attempt; record the number of attempts)
 
-  Also confirm that a fetch from `github.com` is still allowed. The existing live tests "Non-allowlisted command is denied" and "Bash cannot write outside the role's paths" keep passing, through their throwaway probe roles.
+  Also confirm that a fetch from `github.com` is still allowed, and try `Glob` with the pattern `/proc/*/environ` against a real session. The existing live tests "Non-allowlisted command is denied" and "Bash cannot write outside the role's paths" keep passing, through their throwaway probe roles.
 
 ### GitHub App Forge
 

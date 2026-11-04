@@ -9,6 +9,7 @@ Kindle Vocab Software Factory. `docs/brief.md` is the source of truth; decisions
 - `pnpm check`: all gates: typecheck, lint, unit tests, `openspec validate --all --strict`
 - `pnpm test` / `pnpm lint` / `pnpm typecheck` / `pnpm spec:validate`: single gates
 - `pnpm test:live`: real Agent SDK sessions with small budgets (`*.live.test.ts`); never in `pnpm check` or CI
+- `pnpm test:docker`: tests that build and run the worker image (`*.docker.test.ts`); never in `pnpm check` or CI
 - `pnpm factory run --issue <n> --until proposal`: runs the factory locally against a GitHub issue (pushes a change branch, comments on the issue). Needs `gh auth login` and `CLAUDE_CODE_OAUTH_TOKEN` in the git-ignored `.env.local` (ADR 0006)
 - `pnpm factory cost --issue <n>`: the work item's tokens, auth mode and estimated cost per attempt and in total
 - `pnpm exec openspec <cmd>`: the pinned OpenSpec CLI (`list`, `show <id>`, `validate <id> --strict`, `archive <id> --yes`)
@@ -24,6 +25,7 @@ Kindle Vocab Software Factory. `docs/brief.md` is the source of truth; decisions
 - `factory/forge`: the `Forge` interface, `GitHubForge` and the test `FakeForge`
 - `factory/orchestrator`: change ids, worktrees and git, the Intake and Proposal handlers, the local run loop
 - `factory/cli`: the `pnpm factory` entry point (`src/main.ts`)
+- `factory/worker`: the `factory-worker` image and entry point, which runs one state per task
 - `app/*`, `infra/`: see brief section 5; packages appear as milestones need them
 
 ## Conventions

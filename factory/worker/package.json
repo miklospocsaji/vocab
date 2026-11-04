@@ -1,0 +1,8 @@
+{
+  "name": "@vocab/factory-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p ."
+  }
+}

@@ -9,7 +9,7 @@ export default defineConfig({
         test: {
           name: "unit",
           include: [`${packages}/test/**/*.test.ts`],
-          exclude: ["**/node_modules/**", "**/*.live.test.ts"],
+          exclude: ["**/node_modules/**", "**/*.live.test.ts", "**/*.docker.test.ts"],
         },
       },
       {
@@ -19,6 +19,15 @@ export default defineConfig({
           include: [`${packages}/test/**/*.live.test.ts`],
           setupFiles: ["./vitest.live-setup.ts"],
           testTimeout: 300_000,
+        },
+      },
+      {
+        // Build and run the worker image: run only by `pnpm test:docker`, never by `pnpm check` or CI.
+        test: {
+          name: "docker",
+          include: [`${packages}/test/**/*.docker.test.ts`],
+          testTimeout: 600_000,
+          hookTimeout: 600_000,
         },
       },
     ],
