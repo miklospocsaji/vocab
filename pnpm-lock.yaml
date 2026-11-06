@@ -249,6 +249,15 @@ importers:
 
   factory/orchestrator:
     dependencies:
+      '@aws-sdk/client-ecs':
+        specifier: 3.1161.0
+        version: 3.1161.0
+      '@aws-sdk/client-sfn':
+        specifier: 3.1161.0
+        version: 3.1161.0
+      '@aws-sdk/client-ssm':
+        specifier: 3.1161.0
+        version: 3.1161.0
       '@vocab/factory-artifacts':
         specifier: workspace:*
         version: link:../artifacts
@@ -261,6 +270,13 @@ importers:
       '@vocab/factory-roles':
         specifier: workspace:*
         version: link:../roles
+    devDependencies:
+      '@aws-sdk/client-cloudformation':
+        specifier: 3.1161.0
+        version: 3.1161.0
+      jsonata:
+        specifier: 2.2.2
+        version: 2.2.2
 
   factory/roles:
     dependencies:
@@ -301,6 +317,9 @@ importers:
 
   factory/worker:
     dependencies:
+      '@aws-sdk/client-sfn':
+        specifier: 3.1161.0
+        version: 3.1161.0
       '@vocab/factory-forge':
         specifier: workspace:*
         version: link:../forge
@@ -323,6 +342,9 @@ importers:
 
   infra:
     dependencies:
+      '@vocab/factory-orchestrator':
+        specifier: workspace:*
+        version: link:../factory/orchestrator
       aws-cdk-lib:
         specifier: 2.275.0
         version: 2.275.0(constructs@10.8.1)
@@ -427,6 +449,14 @@ packages:
 
   '@aws-sdk/client-ecs@3.1161.0':
     resolution: {integrity: sha512-JUJfskVw/BbVL0FHNiS5cvJF5SMSb0FuySL6/CXZWJtjWN6JPebw2afnmXjruN/H5Be1CgMtjtNZnvxU9DszxA==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-sfn@3.1161.0':
+    resolution: {integrity: sha512-eTCeNuIJLedVFv9knTZjTmEYdWkODhGtIpvYZ0LWgNYX60JwIPHh8fHBdEfJC5KS7++lnixa+Xg83NKlvpCdLQ==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/client-ssm@3.1161.0':
+    resolution: {integrity: sha512-UVO4TLYKtkEC3Rme+xiOZn8FzyvAUmufDtkzFtAccGTuGBBeG53Or09UaGwmDBAps/pN0sZ8pYn36Pa/ocJn3w==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/core@3.980.0':
@@ -1648,6 +1678,10 @@ packages:
   json-with-bigint@3.5.12:
     resolution: {integrity: sha512-uwbF/wSSuOgC7qqlq27Xp5B6a2MHVug3t0idZdTqu0JnlFvgJuH7ju+KAk/J06C7GfhoYy2gnb9wz2INqcne7w==}
 
+  jsonata@2.2.2:
+    resolution: {integrity: sha512-XDFH2PuaAXv0AXJEWwElXbqADmKFGKMLMkFb+qOz0EhjQW2EIJ6pgtordLU+4u3IVERyBfqy6bi6kZKEncvRqA==}
+    engines: {node: '>= 8'}
+
   keyv@5.6.0:
     resolution: {integrity: sha512-CYDD3SOtsHtyXeEORYRx2qBtpDJFjRTGXUtmNEMGyzYOKj1TE3tycdlho7kA1Ufx9OYWZzg52QFBGALTirzDSw==}
 
@@ -2308,6 +2342,28 @@ snapshots:
       tslib: 2.9.1
 
   '@aws-sdk/client-ecs@3.1161.0':
+    dependencies:
+      '@aws-sdk/core': 3.980.0
+      '@aws-sdk/credential-provider-node': 3.972.93
+      '@aws-sdk/types': 3.975.0
+      '@smithy/core': 3.39.0
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.14.2
+      '@smithy/types': 4.20.0
+      tslib: 2.9.1
+
+  '@aws-sdk/client-sfn@3.1161.0':
+    dependencies:
+      '@aws-sdk/core': 3.980.0
+      '@aws-sdk/credential-provider-node': 3.972.93
+      '@aws-sdk/types': 3.975.0
+      '@smithy/core': 3.39.0
+      '@smithy/fetch-http-handler': 5.8.0
+      '@smithy/node-http-handler': 4.14.2
+      '@smithy/types': 4.20.0
+      tslib: 2.9.1
+
+  '@aws-sdk/client-ssm@3.1161.0':
     dependencies:
       '@aws-sdk/core': 3.980.0
       '@aws-sdk/credential-provider-node': 3.972.93
@@ -3523,6 +3579,8 @@ snapshots:
   json-stable-stringify-without-jsonify@1.0.1: {}
 
   json-with-bigint@3.5.12: {}
+
+  jsonata@2.2.2: {}
 
   keyv@5.6.0:
     dependencies:

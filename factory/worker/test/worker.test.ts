@@ -1,6 +1,7 @@
 /**
- * The worker (add-factory-worker task 1.12): `runWorker` with a FakeForge on a temp bare
- * remote, the scripted fake role runner and the real ledger.
+ * The worker (add-factory-worker task 1.12, add-cloud-proposal-run task 3.4): `runWorker`
+ * with a FakeForge on a temp bare remote, the scripted fake role runner, a fake Step Functions
+ * client and the real ledger.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -8,13 +9,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ForgeError } from "@vocab/factory-forge";
 import { FakeForge, type FakeIssue } from "@vocab/factory-forge/testing";
-import { findWorkItemByIssue, LedgerRecorder, listAttempts } from "@vocab/factory-ledger";
+import { createWorkItem, findOpenApproval, findWorkItemByIssue, LedgerRecorder, listAttempts, type ApprovalRow } from "@vocab/factory-ledger";
 import { createTestDatabase, type TestDatabase } from "@vocab/factory-ledger/testing";
 import { MISSING_REQUIREMENT_COMMENT } from "@vocab/factory-orchestrator";
 import { loadRole, type Role } from "@vocab/factory-roles";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { CHANGE_FILES, createFakeRoleRunner, type FakeCall, type FakeStep } from "../../orchestrator/test/fake-role-runner.ts";
 import { runWorker, WORKER_EXIT, type WorkerDeps, type WorkerIdentity } from "../src/worker.ts";
+import { FakeTaskTokens } from "./fake-task-tokens.ts";
 
 const CHANGE_ID = "add-import-kindle-vocab-db";
 const ISSUE = { number: 12, title: "Import Kindle vocab.db", body: "Import the lookups from the Kindle's vocab.db." };
@@ -32,6 +34,7 @@ let root: string;
 let remote: string;
 let home: string;
 let forge: FakeForge;
+let taskTokens: FakeTaskTokens;
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd, encoding: "utf8" }).trim();
@@ -65,6 +68,7 @@ function worker(): Worker {
         runRole: fake.runRole,
         role,
         home,
+        taskTokens,
         out: (text) => (out += text),
         err: (text) => (err += text),
         ...overrides,
@@ -120,6 +124,7 @@ beforeEach(() => {
 
   const issues: FakeIssue[] = [ISSUE, EMPTY_ISSUE];
   forge = new FakeForge({ remote, issues });
+  taskTokens = new FakeTaskTokens();
 });
 
 afterEach(async () => {
@@ -294,5 +299,320 @@ describe("factory-worker input", () => {
 
     expect(code).toBe(WORKER_EXIT.error);
     expect(err).toContain("502 Bad Gateway");
+  });
+});
+
+// add-cloud-proposal-run task 3.4: the cloud states.
+
+const EXECUTION = "arn:aws:states:eu-central-1:123456789012:execution:factory-work-item:issue-12-5f0c";
+const OTHER_EXECUTION = "arn:aws:states:eu-central-1:123456789012:execution:factory-work-item:issue-12-9d1e";
+const TOKEN = "AQB8AAAAKgAAAAMAAAAAAAAAAeTaskToken";
+const OWNER = "miklospocsaji";
+
+const cloudIntake = (arn = EXECUTION) => ["intake", "--issue", String(ISSUE.number), "--execution", arn];
+const awaitApproval = (n = ISSUE.number) => ["await-approval", "--issue", String(n)];
+const approve = (n = ISSUE.number, by = OWNER) => ["approve", "--issue", String(n), "--by", by];
+const approved = (n = ISSUE.number) => ["approved", "--issue", String(n)];
+const escalate = (reason: string, n = ISSUE.number) => ["escalate", "--issue", String(n), "--reason", reason];
+
+/** The proposal author in api-key mode, as the worker runs it in the cloud. */
+const apiKeyRole = (): Role => ({ ...role, authMode: "api-key" });
+
+async function approvals(): Promise<ApprovalRow[]> {
+  const workItem = await findWorkItemByIssue(db.pool, ISSUE.number);
+  if (workItem === undefined) return [];
+  const { rows } = await db.pool.query<{ id: string; state: string; task_token: string; resolved_by: string | null }>(
+    "SELECT id, state, task_token, resolved_by FROM approvals WHERE work_item_id = $1 ORDER BY id",
+    [workItem.id],
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    workItemId: workItem.id,
+    state: row.state as ApprovalRow["state"],
+    taskToken: row.task_token,
+    requestedAt: new Date(0),
+    resolvedAt: null,
+    resolvedBy: row.resolved_by,
+  }));
+}
+
+/** Intake and a valid proposal in the cloud: the work item is awaiting-proposal-approval. */
+async function proposed(w: Worker, steps: FakeStep[] = [VALID]): Promise<void> {
+  expect((await w.run(cloudIntake())).code).toBe(WORKER_EXIT.ok);
+  expect((await w.run(propose(), steps, { role: apiKeyRole() })).code).toBe(WORKER_EXIT.ok);
+  expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("awaiting-proposal-approval");
+}
+
+/** Then AwaitApproval, which stores the approval and posts the summary. */
+async function awaiting(w: Worker, steps: FakeStep[] = [VALID]): Promise<void> {
+  await proposed(w, steps);
+  expect((await w.run(awaitApproval(), [], { taskToken: TOKEN })).code).toBe(WORKER_EXIT.ok);
+}
+
+describe("factory-worker intake in the cloud", () => {
+  it("records the execution's ARN on the work item, and a retry of the same execution goes on", async () => {
+    const w = worker();
+
+    expect((await w.run(cloudIntake())).code).toBe(WORKER_EXIT.ok);
+    expect((await w.run(cloudIntake())).code).toBe(WORKER_EXIT.ok);
+
+    const workItem = await findWorkItemByIssue(db.pool, ISSUE.number);
+    expect(workItem?.executionArn).toBe(EXECUTION);
+    expect(workItem?.state).toBe("proposal");
+    expect(await workItemCount()).toBe(1);
+  });
+
+  it("Scenario: Relabelling does not create a second work item", async () => {
+    const w = worker();
+    await proposed(w);
+    const before = await findWorkItemByIssue(db.pool, ISSUE.number);
+    const branches = remoteBranches();
+    const comments = forge.comments.length;
+
+    const { code } = await w.run(cloudIntake(OTHER_EXECUTION));
+
+    expect(code).toBe(WORKER_EXIT.ended);
+    expect(await workItemCount()).toBe(1);
+    const after = await findWorkItemByIssue(db.pool, ISSUE.number);
+    expect(after?.executionArn).toBe(EXECUTION);
+    expect(after?.state).toBe("awaiting-proposal-approval");
+    expect(after?.updatedAt).toEqual(before?.updatedAt);
+    expect(remoteBranches()).toEqual(branches);
+    expect(forge.comments).toHaveLength(comments);
+    expect(w.calls).toHaveLength(1);
+  });
+
+  it("ends an Intake that loses the insert to a concurrent one with exit 4, creating nothing", async () => {
+    const w = worker();
+    const getIssue = forge.getIssue.bind(forge);
+    // The other execution's Intake inserts its work item while this one reads the issue.
+    vi.spyOn(forge, "getIssue").mockImplementation(async (n) => {
+      await createWorkItem(db.pool, { issueNumber: n, changeId: "add-kindle-import", branch: "add-kindle-import", state: "intake", executionArn: OTHER_EXECUTION });
+      return getIssue(n);
+    });
+
+    const { code } = await w.run(cloudIntake());
+
+    expect(code).toBe(WORKER_EXIT.ended);
+    expect(await workItemCount()).toBe(1);
+    expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.executionArn).toBe(OTHER_EXECUTION);
+    expect(remoteBranches()).toEqual(["master"]);
+  });
+});
+
+describe("factory-worker await-approval", () => {
+  it("Scenario: Execution waits for approval", async () => {
+    const w = worker();
+    await proposed(w);
+    const comment = forge.comment.bind(forge);
+    const openWhenCommented: (ApprovalRow | undefined)[] = [];
+    vi.spyOn(forge, "comment").mockImplementation(async (n, body) => {
+      const workItem = await findWorkItemByIssue(db.pool, n);
+      openWhenCommented.push(workItem === undefined ? undefined : await findOpenApproval(db.pool, workItem.id));
+      return comment(n, body);
+    });
+
+    const { code } = await w.run(awaitApproval(), [], { taskToken: TOKEN });
+
+    expect(code).toBe(WORKER_EXIT.ok);
+    // The approval with its token was in the ledger before the summary was posted.
+    expect(openWhenCommented).toHaveLength(1);
+    expect(openWhenCommented[0]).toMatchObject({ state: "open", taskToken: TOKEN });
+    expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("awaiting-proposal-approval");
+    // The execution stays paused: nothing resumed or failed the task.
+    expect(taskTokens.successes).toEqual([]);
+    expect(taskTokens.failures).toEqual([]);
+
+    // The summary lists what M1's does, with Why and What Changes from the pushed proposal.md.
+    expect(forge.comments).toHaveLength(1);
+    const body = forge.comments[0]?.body ?? "";
+    expect(forge.comments[0]?.issueNumber).toBe(ISSUE.number);
+    expect(body).toContain(CHANGE_ID);
+    expect(body).toContain("vocab-import");
+    expect(body).toMatch(/complexity\W+small/i);
+    expect(body).toContain("Owners want their Kindle lookups in the app.");
+    expect(body).toContain("Import the lookups from a Kindle vocab.db.");
+    expect(body).not.toContain(TOKEN);
+  });
+
+  it("Scenario: Summary shows the cost", async () => {
+    const w = worker();
+    // Two attempts: the summary counts both.
+    await awaiting(w, [{ ...INVALID, costUsd: 0.25 }, { ...VALID, costUsd: 0.5 }]);
+
+    const body = forge.comments.at(-1)?.body ?? "";
+    // Each fake attempt reports 1,000 input and 500 output tokens.
+    expect(body).toContain("3,000 tokens");
+    expect(body).toContain("$0.75");
+    expect(body).toContain("`api-key`");
+    const last = body.trim().split("\n\n").at(-1) ?? "";
+    expect(last).toMatch(/reply `\/approve`/i);
+  });
+
+  it("sends SendTaskFailure with a fixed cause when it fails, and exits 1", async () => {
+    const w = worker();
+    await proposed(w);
+    vi.spyOn(forge, "comment").mockRejectedValue(new ForgeError("GitHub: commenting on #12 failed: 502 Bad Gateway, token ghs_secret", "failed", 502));
+
+    const { code } = await w.run(awaitApproval(), [], { taskToken: TOKEN });
+
+    expect(code).toBe(WORKER_EXIT.error);
+    expect(taskTokens.failures).toHaveLength(1);
+    const [failure] = taskTokens.failures;
+    expect(failure?.taskToken).toBe(TOKEN);
+    // Execution history shows the error and cause: nothing from the failure itself.
+    expect(`${failure?.error ?? ""} ${failure?.cause ?? ""}`).not.toMatch(/502|ghs_|GitHub/);
+    expect(taskTokens.successes).toEqual([]);
+  });
+
+  it("fails the task, storing nothing, when the work item is not awaiting approval", async () => {
+    const w = worker();
+    expect((await w.run(cloudIntake())).code).toBe(WORKER_EXIT.ok);
+
+    const { code } = await w.run(awaitApproval(), [], { taskToken: TOKEN });
+
+    expect(code).toBe(WORKER_EXIT.invalid);
+    expect(taskTokens.failures.map((failure) => failure.taskToken)).toEqual([TOKEN]);
+    expect(await approvals()).toEqual([]);
+    expect(forge.comments).toEqual([]);
+  });
+
+  it("refuses to run without a task token", async () => {
+    const w = worker();
+    await proposed(w);
+
+    const { code, err } = await w.run(awaitApproval());
+
+    expect(code).toBe(WORKER_EXIT.invalid);
+    expect(err).toContain("FACTORY_TASK_TOKEN");
+    expect(await approvals()).toEqual([]);
+    expect(forge.comments).toEqual([]);
+  });
+});
+
+describe("factory-worker approve and approved", () => {
+  it("Scenario: Owner's approval resumes the execution", async () => {
+    const w = worker();
+    await awaiting(w);
+
+    expect((await w.run(approve())).code).toBe(WORKER_EXIT.ok);
+
+    // approve closes the approval with the owner's login and resumes the execution with its token.
+    expect(taskTokens.successes.map((success) => success.taskToken)).toEqual([TOKEN]);
+    expect(await approvals()).toEqual([expect.objectContaining({ state: "closed", taskToken: TOKEN, resolvedBy: OWNER })]);
+
+    // The execution goes on to Approved.
+    const comments = forge.comments.length;
+    expect((await w.run(approved())).code).toBe(WORKER_EXIT.ok);
+
+    expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("proposal-approved");
+    expect(forge.comments).toHaveLength(comments + 1);
+    expect(forge.comments.at(-1)?.body).toMatch(/approved/i);
+    expect(forge.comments.at(-1)?.body).toContain("proposal-approved");
+
+    // A retry of Approved changes nothing and posts nothing.
+    expect((await w.run(approved())).code).toBe(WORKER_EXIT.ok);
+    expect(forge.comments).toHaveLength(comments + 1);
+  });
+
+  it("Scenario: Approval with nothing awaiting is answered", async () => {
+    const w = worker();
+    expect((await w.run(cloudIntake())).code).toBe(WORKER_EXIT.ok);
+
+    expect((await w.run(approve())).code).toBe(WORKER_EXIT.ok);
+
+    expect(taskTokens.successes).toEqual([]);
+    expect(forge.comments).toHaveLength(1);
+    expect(forge.comments[0]?.body).toMatch(/nothing awaits approval/i);
+    expect(forge.comments[0]?.body).toContain("`proposal`");
+    expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("proposal");
+
+    // An issue without a work item gets an answer too.
+    expect((await w.run(approve(EMPTY_ISSUE.number))).code).toBe(WORKER_EXIT.ok);
+    expect(forge.comments.at(-1)).toMatchObject({ issueNumber: EMPTY_ISSUE.number, body: expect.stringMatching(/nothing awaits approval/i) as unknown });
+    expect(taskTokens.successes).toEqual([]);
+  });
+
+  it("answers a second /approve after the first resumed the execution, without resuming it again", async () => {
+    const w = worker();
+    await awaiting(w);
+    expect((await w.run(approve())).code).toBe(WORKER_EXIT.ok);
+
+    expect((await w.run(approve())).code).toBe(WORKER_EXIT.ok);
+
+    expect(taskTokens.successes).toHaveLength(1);
+    expect(forge.comments.at(-1)?.body).toMatch(/nothing awaits approval/i);
+  });
+
+  it("reopens the approval and says so when SendTaskSuccess fails", async () => {
+    const w = worker();
+    await awaiting(w);
+    taskTokens.failNextSuccess = new Error("ThrottlingException: Rate exceeded");
+
+    const { code } = await w.run(approve());
+
+    expect(code).toBe(WORKER_EXIT.error);
+    expect(await approvals()).toEqual([expect.objectContaining({ state: "open", taskToken: TOKEN, resolvedBy: null })]);
+    expect(forge.comments.at(-1)?.body).toMatch(/`\/approve`/);
+    expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("awaiting-proposal-approval");
+
+    // The owner tries again, and it goes through.
+    expect((await w.run(approve())).code).toBe(WORKER_EXIT.ok);
+    expect(taskTokens.successes.map((success) => success.taskToken)).toEqual([TOKEN]);
+  });
+
+  it("refuses approve without the approver's login, and approved for a work item not awaiting approval", async () => {
+    const w = worker();
+    expect((await w.run(cloudIntake())).code).toBe(WORKER_EXIT.ok);
+
+    expect((await w.run(["approve", "--issue", String(ISSUE.number)])).code).toBe(WORKER_EXIT.invalid);
+    expect((await w.run(approve(ISSUE.number, "not a login"))).code).toBe(WORKER_EXIT.invalid);
+    expect((await w.run(approved())).code).toBe(WORKER_EXIT.invalid);
+
+    expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("proposal");
+    expect(forge.comments).toEqual([]);
+  });
+});
+
+describe("factory-worker escalate", () => {
+  it("Scenario: Worker crash escalates the work item", async () => {
+    const w = worker();
+    expect((await w.run(cloudIntake())).code).toBe(WORKER_EXIT.ok);
+
+    const { code } = await w.run(escalate("worker-failed"));
+
+    expect(code).toBe(WORKER_EXIT.ok);
+    expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("escalated");
+    expect(forge.comments).toHaveLength(1);
+    const body = forge.comments[0]?.body ?? "";
+    expect(body).toContain(CHANGE_ID);
+    expect(body).toContain("`worker-failed`");
+    expect(body).toMatch(/infrastructure/i);
+
+    // Repeated: nothing more.
+    expect((await w.run(escalate("worker-failed"))).code).toBe(WORKER_EXIT.ok);
+    expect(forge.comments).toHaveLength(1);
+  });
+
+  it("comments with the fixed reason worker-refused, and on an issue with no work item", async () => {
+    const w = worker();
+
+    expect((await w.run(escalate("worker-refused"))).code).toBe(WORKER_EXIT.ok);
+
+    expect(await workItemCount()).toBe(0);
+    expect(forge.comments).toHaveLength(1);
+    expect(forge.comments[0]?.issueNumber).toBe(ISSUE.number);
+    expect(forge.comments[0]?.body).toContain("`worker-refused`");
+  });
+
+  it("refuses any other reason", async () => {
+    const w = worker();
+    expect((await w.run(cloudIntake())).code).toBe(WORKER_EXIT.ok);
+
+    const { code } = await w.run(escalate("CannotPullContainerError: secret=abc"));
+
+    expect(code).toBe(WORKER_EXIT.invalid);
+    expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("proposal");
+    expect(forge.comments).toEqual([]);
   });
 });

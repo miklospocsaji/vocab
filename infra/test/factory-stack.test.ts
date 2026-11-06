@@ -1,6 +1,7 @@
 /**
- * CDK assertions on the factory stack (add-cloud-proposal-run task 2.3), synthesised with
- * bundling skipped. The worker image's build context is staged, but never built.
+ * CDK assertions on the factory stack (add-cloud-proposal-run tasks 2.3 and 3.8), synthesised
+ * with bundling skipped. The worker image's build context is staged, but never built, and the
+ * webhook Lambda is not bundled.
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -8,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
+import { WEBHOOK_ENV } from "@vocab/factory-orchestrator/webhook-env";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BOUNDARY_CHECK_TARGET, FactoryStack, PARAMETERS, STATE_MACHINE_NAME, WORKER_CONTAINER } from "../factory-stack.ts";
 
@@ -190,8 +192,11 @@ describe("factory stack: worker", () => {
       FACTORY_GITHUB_APP_SLUG: GITHUB.slug,
     });
 
-    // The webhook secret is the Lambda's alone (ADR 0009).
-    expect(JSON.stringify(template.toJSON())).not.toContain(PARAMETERS.githubWebhookSecret.slice(1));
+    // The webhook secret is the Lambda's alone (ADR 0009): neither the worker nor its roles name it.
+    const taskDefinition = taskDefinitionOf("WorkerTaskDefinitionArn");
+    const roles = [target(taskDefinition["TaskRoleArn"]), target(taskDefinition["ExecutionRoleArn"])].map((role) => role ?? "");
+    const worker = JSON.stringify([taskDefinition, ...roles.flatMap((role) => policiesOf(role))]);
+    expect(worker).not.toContain(PARAMETERS.githubWebhookSecret.slice(1));
   });
 
   it("runs the worker image on Fargate, 1 vCPU and 2 GB, linux/amd64", () => {
@@ -382,5 +387,135 @@ describe("factory stack: budget", () => {
       ]),
     );
     expect(budget?.["NotificationsWithSubscribers"]).toHaveLength(2);
+  });
+});
+
+/** The one resource of a type, with its logical id. */
+function only(type: string): [string, Record<string, unknown>] {
+  const found = ofType(type);
+  expect(found, type).toHaveLength(1);
+  const [id, resource] = found[0] ?? ["", { Type: type }];
+  return [id, resource.Properties ?? {}];
+}
+
+/** Every policy statement of a role, with Action as a list. */
+function statementsOf(roleId: string): { Action: string[]; Resource: unknown[]; Condition?: unknown }[] {
+  return policiesOf(roleId)
+    .flatMap((policy) => policy.Statement)
+    .map((statement) => {
+      expect(statement["Effect"]).toBe("Allow");
+      const action = statement["Action"];
+      const resource = statement["Resource"];
+      return {
+        Action: Array.isArray(action) ? (action as string[]) : [action as string],
+        Resource: Array.isArray(resource) ? (resource as unknown[]) : [resource],
+        ...(statement["Condition"] === undefined ? {} : { Condition: statement["Condition"] }),
+      };
+    });
+}
+
+/** The resources a role may use an action on. */
+function resourcesFor(statements: { Action: string[]; Resource: unknown[] }[], action: string): unknown[] {
+  return statements.filter((statement) => statement.Action.includes(action)).flatMap((statement) => statement.Resource);
+}
+
+function workerRoles(): string[] {
+  const taskDefinition = taskDefinitionOf("WorkerTaskDefinitionArn");
+  return [target(taskDefinition["TaskRoleArn"]), target(taskDefinition["ExecutionRoleArn"])].map((role) => role ?? "");
+}
+
+describe("factory stack: webhook Lambda", () => {
+  it("has a Function URL and no VPC configuration", () => {
+    const [functionId, fn] = only("AWS::Lambda::Function");
+    expect(fn["Runtime"]).toBe("nodejs24.x");
+    expect(fn).not.toHaveProperty("VpcConfig");
+    // GitHub waits 10 seconds for an answer.
+    expect(Number(fn["Timeout"])).toBeLessThanOrEqual(10);
+
+    const [, url] = only("AWS::Lambda::Url");
+    expect(url["AuthType"]).toBe("NONE");
+    expect(target(url["TargetFunctionArn"])).toBe(functionId);
+    expect(template.findOutputs("WebhookUrl")).not.toEqual({});
+  });
+
+  it("is configured by name and reference only, with no secret in its environment", () => {
+    const [, fn] = only("AWS::Lambda::Function");
+    const variables = (fn["Environment"] as { Variables?: Record<string, unknown> } | undefined)?.Variables ?? {};
+    expect(Object.keys(variables).filter((name) => name !== "NODE_OPTIONS" && name !== "AWS_NODEJS_CONNECTION_REUSE_ENABLED").sort()).toEqual(
+      Object.values(WEBHOOK_ENV).sort(),
+    );
+    expect(variables[WEBHOOK_ENV.owner]).toBe(GITHUB.owner);
+    expect(variables[WEBHOOK_ENV.repository]).toBe(GITHUB.repository);
+    expect(variables[WEBHOOK_ENV.secretParameter]).toBe(PARAMETERS.githubWebhookSecret);
+    expect(variables[WEBHOOK_ENV.container]).toBe(WORKER_CONTAINER);
+    expect(target(variables[WEBHOOK_ENV.stateMachineArn])).toBe(only("AWS::StepFunctions::StateMachine")[0]);
+    expect(target(variables[WEBHOOK_ENV.taskDefinition])).toBe(outputTarget("WorkerTaskDefinitionArn"));
+    expect(JSON.stringify(variables)).not.toMatch(/secretsmanager|SecretTargetAttachment/i);
+  });
+
+  it("lets its role only start this state machine, run the worker, pass its roles and read the webhook secret", () => {
+    const [, fn] = only("AWS::Lambda::Function");
+    const role = target(fn["Role"]) ?? "";
+    const statements = statementsOf(role);
+
+    expect(new Set(statements.flatMap((statement) => statement.Action))).toEqual(
+      new Set(["states:StartExecution", "ecs:RunTask", "iam:PassRole", "ssm:GetParameter"]),
+    );
+    expect(resourcesFor(statements, "states:StartExecution").map(target)).toEqual([only("AWS::StepFunctions::StateMachine")[0]]);
+    expect(resourcesFor(statements, "ecs:RunTask").map(target)).toEqual([outputTarget("WorkerTaskDefinitionArn")]);
+    expect(new Set(resourcesFor(statements, "iam:PassRole").map(target))).toEqual(new Set(workerRoles()));
+    const parameters = resourcesFor(statements, "ssm:GetParameter");
+    expect(parameters).toHaveLength(1);
+    expect(JSON.stringify(parameters[0])).toContain(`parameter${PARAMETERS.githubWebhookSecret}`);
+
+    // RunTask only in the factory's cluster.
+    const runTask = statements.find((statement) => statement.Action.includes("ecs:RunTask"));
+    expect(JSON.stringify(runTask?.Condition)).toContain(outputTarget("ClusterArn"));
+
+    // No access to the ledger's secret, and nothing on `*` but the basic Lambda logging policy.
+    const text = JSON.stringify(policiesOf(role));
+    expect(text).not.toMatch(/secretsmanager:/);
+    expect(text).not.toContain(ofType("AWS::SecretsManager::Secret")[0]?.[0] ?? "no-secret");
+    for (const statement of statements) expect(statement.Resource).not.toContain("*");
+    expect(JSON.stringify(resources[role]?.Properties?.["ManagedPolicyArns"] ?? [])).toContain("AWSLambdaBasicExecutionRole");
+    expect((resources[role]?.Properties?.["ManagedPolicyArns"] as unknown[] | undefined) ?? []).toHaveLength(1);
+  });
+});
+
+describe("factory stack: state machine", () => {
+  it("is the JSONata definition, named as the worker's task role expects", () => {
+    const [, machine] = only("AWS::StepFunctions::StateMachine");
+    expect(machine["StateMachineName"]).toBe(STATE_MACHINE_NAME);
+    expect(machine["StateMachineType"] ?? "STANDARD").toBe("STANDARD");
+    const definition = JSON.stringify(machine["DefinitionString"]);
+    expect(definition).toContain('\\"QueryLanguage\\":\\"JSONata\\"');
+    expect(definition).toContain(outputTarget("WorkerTaskDefinitionArn"));
+    expect(definition).not.toContain(outputTarget("BoundaryCheckTaskDefinitionArn"));
+    expect(template.findOutputs("StateMachineArn")).not.toEqual({});
+  });
+
+  it("may run only the worker task definition and pass only its roles", () => {
+    const [, machine] = only("AWS::StepFunctions::StateMachine");
+    const role = target(machine["RoleArn"]) ?? "";
+    const statements = statementsOf(role);
+
+    expect(new Set(statements.flatMap((statement) => statement.Action))).toEqual(
+      new Set(["ecs:RunTask", "ecs:StopTask", "ecs:DescribeTasks", "iam:PassRole", "events:PutTargets", "events:PutRule", "events:DescribeRule"]),
+    );
+    expect(resourcesFor(statements, "ecs:RunTask").map(target)).toEqual([outputTarget("WorkerTaskDefinitionArn")]);
+    expect(new Set(resourcesFor(statements, "iam:PassRole").map(target))).toEqual(new Set(workerRoles()));
+    // StopTask and DescribeTasks for the `.sync` integration, on the factory cluster's tasks only.
+    for (const action of ["ecs:StopTask", "ecs:DescribeTasks"]) {
+      for (const resource of resourcesFor(statements, action)) {
+        expect(resource).not.toBe("*");
+        expect(JSON.stringify(resource)).toContain(":task/");
+      }
+    }
+    // The managed rule Step Functions uses to wait for ECS tasks.
+    for (const action of ["events:PutTargets", "events:PutRule", "events:DescribeRule"]) {
+      expect(JSON.stringify(resourcesFor(statements, action))).toContain("rule/StepFunctionsGetEventsForECSTaskRule");
+    }
+    expect(JSON.stringify(policiesOf(role))).not.toContain(outputTarget("BoundaryCheckTaskDefinitionArn"));
+    expect(resources[role]?.Properties?.["ManagedPolicyArns"]).toBeUndefined();
   });
 });

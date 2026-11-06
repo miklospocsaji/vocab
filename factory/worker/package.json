@@ -6,6 +6,7 @@
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@aws-sdk/client-sfn": "3.1161.0",
     "@vocab/factory-forge": "workspace:*",
     "@vocab/factory-ledger": "workspace:*",
     "@vocab/factory-orchestrator": "workspace:*",

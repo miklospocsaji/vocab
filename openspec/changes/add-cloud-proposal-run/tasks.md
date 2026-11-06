@@ -55,21 +55,21 @@ Unit tests run in `pnpm check` with fakes for GitHub and AWS and the real local 
 
 ## Step 3: State machine and Lambda
 
-- [ ] 3.1 Spike, with no production code, and confirmed with the owner first: with the AWS CLI, create a throwaway state machine with one `ecs:runTask.sync` state, run the worker task definition with command overrides that exit 0, 1 and 3, then delete the state machine. Record in `design.md` where the exit code appears for a non-zero exit. A few cents at most.
+- [x] 3.1 Spike, with no production code, and confirmed with the owner first: with the AWS CLI, create a throwaway state machine with one `ecs:runTask.sync` state, run the worker task definition with command overrides that exit 0, 1 and 3, then delete the state machine. Record in `design.md` where the exit code appears for a non-zero exit. A few cents at most.
 
 ### State machine
 
-- [ ] 3.2 Failing tests for `definition()` in `factory/orchestrator/src/state-machine.ts` (pure ASL, no AWS), following the spike. Scenarios:
+- [x] 3.2 Failing tests for `definition()` in `factory/orchestrator/src/state-machine.ts` (pure ASL, no AWS), following the spike. Scenarios:
   - Worker crash escalates the work item (definition half: exit 1 or a task that never started retries twice with waits, then goes to Escalate and Fail; exit 2 goes to Escalate at once)
   - Escalated proposal ends the execution
   - Execution history holds no artifacts or secrets (static half: every state's arguments hold only the issue number, the execution ARN, states, exit codes and the task token)
 
   Also: `QueryLanguage` is JSONata; Intake → Proposal → AwaitApproval → Approved; exit 4 from Intake ends successfully.
-- [ ] 3.3 Write `state-machine.ts`.
+- [x] 3.3 Write `state-machine.ts`.
 
 ### Worker states
 
-- [ ] 3.4 Failing tests for the new worker states, with `FakeForge`, a fake Step Functions client and the real ledger. Scenarios:
+- [x] 3.4 Failing tests for the new worker states, with `FakeForge`, a fake Step Functions client and the real ledger. Scenarios:
   - Execution waits for approval (the approval is stored before the summary comment is posted; `FakeForge` checks the ledger when the comment arrives)
   - Summary shows the cost
   - Owner's approval resumes the execution (`approve` closes the approval and sends the token; `approved` sets `proposal-approved` and posts the confirmation)
@@ -78,11 +78,11 @@ Unit tests run in `pnpm check` with fakes for GitHub and AWS and the real local 
   - Relabelling does not create a second work item (`intake` with a different ARN exits 4 and changes nothing)
 
   Also: a failed `SendTaskSuccess` reopens the approval; an error in `await-approval` sends `SendTaskFailure`; the local run loop treats `proposal-approved` as past `--until proposal`.
-- [ ] 3.5 Write the worker states, `factory/orchestrator/src/approval.ts`, the cost line and approval instruction in `summary.ts`, the execution ARN in `intake`, `proposal-approved` in `WorkItemState`, and the run-loop order. Amend ADR 0002.
+- [x] 3.5 Write the worker states, `factory/orchestrator/src/approval.ts`, the cost line and approval instruction in `summary.ts`, the execution ARN in `intake`, `proposal-approved` in `WorkItemState`, and the run-loop order. Amend ADR 0002.
 
 ### Webhook
 
-- [ ] 3.6 Failing tests for the webhook handler, with fake Step Functions and ECS clients. Scenarios:
+- [x] 3.6 Failing tests for the webhook handler, with fake Step Functions and ECS clients. Scenarios:
   - Unsigned webhook is rejected
   - Other labels are ignored
   - Labelling an issue starts an execution (handler half: one `StartExecution` with input `{ issueNumber }` only)
@@ -90,16 +90,16 @@ Unit tests run in `pnpm check` with fakes for GitHub and AWS and the real local 
   - Approval from another user is ignored
 
   Also cover: `/approve` on a pull request starts nothing; signatures are compared in constant time; the webhook secret is read once per cold start and never logged.
-- [ ] 3.7 Write `factory/orchestrator/src/lambda/webhook.ts`.
+- [x] 3.7 Write `factory/orchestrator/src/lambda/webhook.ts`.
 
 ### Infrastructure
 
-- [ ] 3.8 Failing CDK assertion tests:
+- [x] 3.8 Failing CDK assertion tests:
   - the Lambda has a Function URL and no VPC configuration
   - its role may only start this state machine, run the worker task definition, pass the worker's roles and read the webhook secret parameter; it has no access to the ledger's secret
   - the state machine may run only the worker task definition and pass only its roles
-- [ ] 3.9 Add the state machine and the Lambda to `infra/factory-stack.ts`.
-- [ ] 3.10 Failing cloud test, then deploy after confirming with the owner. Scenario: Unsigned webhook is rejected (against the deployed endpoint). The owner sets the App's webhook URL to the Function URL and activates it. Run `pnpm test:cloud`.
+- [x] 3.9 Add the state machine and the Lambda to `infra/factory-stack.ts`.
+- [x] 3.10 Failing cloud test, then deploy after confirming with the owner. Scenario: Unsigned webhook is rejected (against the deployed endpoint). The owner sets the App's webhook URL to the Function URL and activates it. Run `pnpm test:cloud`.
 
 ## Step 4: Exit run
 

@@ -66,7 +66,7 @@ A pure function `definition({ cluster, taskDefinition, subnets, securityGroup, c
 - **Escalate** (`ecs:runTask.sync`): `escalate --reason <code>`, then Fail regardless of its own result.
 - **For Intake, Proposal and Approved:** exit `2` → Escalate at once. Exit `1`, or a task that never started, retries through an `Assign`ed counter and `Wait` states of 30 s and 90 s, then → Escalate. The handlers are idempotent, so a retry after a crash is safe.
 
-**How a non-zero exit surfaces is unverified.** The AWS docs do not say whether a `.sync` task whose container exits non-zero completes with `Containers[0].ExitCode` in its output, or fails the state with the task description in the error's `Cause`. Task 3.1 measures it on a throwaway state machine before `definition()` is written. Either way, the routing above stays the same; only where the exit code is read from changes (`$states.result`, or a `Catch` parsing `$states.errorOutput.Cause`).
+**How a non-zero exit surfaces (measured in task 3.1):** a non-zero exit fails the state with `States.TaskFailed`, and the ECS task description is in `Cause` as a JSON string. So `definition()` reads exit 0 from `$states.result.Containers[0].ExitCode`, and any other exit from a `Catch` on `States.TaskFailed` that parses `$parse($states.errorOutput.Cause).Containers[0].ExitCode`. See "Exit-code spike" below.
 
 ### Changes to existing packages
 
@@ -111,6 +111,28 @@ Run 2 (2026-11-06, after the owner replaced the key with one scoped to the facto
 - The deployed check task definition equals the worker's but for the image, and the worker image's layers are the check image's first layers.
 - "Boundaries hold in Fargate": "Write outside the allowed paths is denied", "WebFetch outside GitHub is denied" and "Reading a process environment is denied" passed on Haiku in api-key mode, and "Proposal author cannot run commands" passed. Each probe ended `invalid-change`, as locally, since probes write no valid change. Model cost $0.0033 in total.
 - `bwrap` still cannot create namespaces on Fargate (the same message as run 1). So M3's Bash roles cannot rely on the SDK sandbox in Fargate.
+
+## Exit-code spike (task 3.1)
+
+Run 2026-11-06 with the `vocab` profile, approved by the owner. Everything below was created for the spike and deleted afterwards.
+- **Setup:**
+  - A throwaway role `vocab-spike-sfn-ecs`. It could run only the worker task definition `FactoryWorker01A7C86A:1`, pass only the worker's two roles, and use the managed rule `StepFunctionsGetEventsForECSTaskRule`.
+  - A STANDARD JSONata state machine `vocab-spike-exit-codes` with one `arn:aws:states:::ecs:runTask.sync` state on the deployed cluster, subnets and worker security group, with a public IP.
+- **Forcing the exit codes:** ECS overrides can't replace the worker's entry point (`node main.ts`), so a command override alone runs a real state (owner decision, 2026-11-06). Each execution used `Command: ["spike"]` plus the environment override `NODE_OPTIONS=--import=data:text/javascript,process.exit(<n>)`, which exits before `main.ts` loads: no ledger, GitHub or model.
+- **Exit 0:** the execution succeeds. The state's result is the task description: `LastStatus: "STOPPED"`, `StopCode: "EssentialContainerExited"`, `Containers[0]: { Name: "worker", ExitCode: 0 }`.
+- **Exit 1 and exit 3:** the state fails (`TaskFailed`, then `ExecutionFailed` with no `Catch`) with `Error: "States.TaskFailed"`. `Cause` is the same task description as a JSON string (about 2.6 KB), with `Containers[0].ExitCode` 1 or 3. Nothing distinguishes exit codes in `Error`, so routing needs the parsed `Cause`.
+- **History holds the overrides.** The `TaskScheduled` parameters and the task description in the result or `Cause` repeat the container overrides, environment values included. So `FACTORY_TASK_TOKEN` will appear in AwaitApproval's history (allowed by "Execution history holds no artifacts or secrets"), and no override may ever carry a secret. Secrets injected through the task definition's `secrets` don't appear: neither their names nor their values were in the task description.
+- **Not measured:** a task that never starts (for example, a failed image pull or no capacity). By AWS's description it also fails with `States.TaskFailed` or an ECS error, but with no `ExitCode`. `definition()` treats a missing exit code like exit 1 (retry).
+- **Left behind:** the rule `StepFunctionsGetEventsForECSTaskRule`, which Step Functions manages (`ManagedBy: states.amazonaws.com`). It's free, and the stack's state machine will use it.
+- **Cost:** three Fargate tasks of under a minute each, under $0.01.
+
+## State machine and webhook deploy (task 3.10)
+
+Deployed 2026-11-06 with the `vocab` profile, approved by the owner (93 s). It added the state machine `factory-work-item` and the webhook Lambda with its Function URL (output `WebhookUrl`). It also replaced the worker and boundary-check task definitions with revision 2, whose images now hold the Step Functions client.
+
+"Unsigned webhook is rejected" passed against the deployed endpoint (`webhook.cloud.test.ts`). Three deliveries, with no signature, another secret's signature and a malformed one, each got 401, and no execution or worker task started. The Lambda's log shows each rejection. That it answered 401 rather than 500 also shows it read the webhook secret from Parameter Store.
+
+The owner then set the App's webhook URL to the Function URL and activated it. The first full `pnpm test:cloud` failed on a test bug: the webhook test counted every task in the cluster, and the boundary check's task, started by the other cloud test file in parallel, was one. The test now counts only tasks of the worker's family, the only ones the webhook can start. Run 2 (2026-11-06) **passed**: all 3 cloud tests, "Unsigned webhook is rejected" and the two boundary tests of task 2.7, on revision 2 of both task definitions.
 
 ## Cost (eu-central-1, monthly, idle; estimates, not checked against the current price list)
 

@@ -3,15 +3,24 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./state-machine": "./src/state-machine.ts",
+    "./webhook-env": "./src/lambda/webhook-env.ts"
   },
   "scripts": {
     "typecheck": "tsc -p ."
   },
   "dependencies": {
+    "@aws-sdk/client-ecs": "3.1161.0",
+    "@aws-sdk/client-sfn": "3.1161.0",
+    "@aws-sdk/client-ssm": "3.1161.0",
     "@vocab/factory-artifacts": "workspace:*",
     "@vocab/factory-forge": "workspace:*",
     "@vocab/factory-ledger": "workspace:*",
     "@vocab/factory-roles": "workspace:*"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-cloudformation": "3.1161.0",
+    "jsonata": "2.2.2"
   }
 }

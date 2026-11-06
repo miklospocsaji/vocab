@@ -7,8 +7,10 @@
  * - compute: an ECS cluster and the `factory-worker` Fargate task definition (ADR 0010), plus a
  *   test-only boundary-check task definition: the same in everything but its image, which is
  *   the worker image plus Vitest. The state machine never runs it.
+ * - orchestration: the work item's Step Functions state machine (JSONata, from `definition()`),
+ *   which runs only the worker task definition, and the webhook Lambda behind a Function URL,
+ *   outside the VPC and with no access to the ledger (ADR 0002, amendment of 2026-11-06)
  * - budget: a $50 monthly alarm for the whole account
- * The state machine and the webhook Lambda come in step 3.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -26,7 +28,9 @@ import {
   OperatingSystemFamily,
   Secret as EcsSecret,
 } from "aws-cdk-lib/aws-ecs";
-import { PolicyStatement } from "aws-cdk-lib/aws-iam";
+import { PolicyStatement, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
+import { Architecture, FunctionUrlAuthType, Runtime } from "aws-cdk-lib/aws-lambda";
+import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
 import {
   AuroraPostgresEngineVersion,
@@ -37,6 +41,9 @@ import {
   ParameterGroup,
 } from "aws-cdk-lib/aws-rds";
 import { StringParameter } from "aws-cdk-lib/aws-ssm";
+import { DefinitionBody, StateMachine } from "aws-cdk-lib/aws-stepfunctions";
+import { definition } from "@vocab/factory-orchestrator/state-machine";
+import { WEBHOOK_ENV } from "@vocab/factory-orchestrator/webhook-env";
 import type { Construct } from "constructs";
 
 /** The state machine's name, fixed so the worker's task role can name it before it exists. */
@@ -55,6 +62,9 @@ export const PARAMETERS = {
 
 const REPO_ROOT = resolve(import.meta.dirname, "..");
 const WORKER_DOCKERFILE = "factory/worker/Dockerfile";
+const WEBHOOK_ENTRY = "factory/orchestrator/src/lambda/webhook.ts";
+/** The rule Step Functions manages to learn when a `.sync` ECS task stops. */
+const ECS_SYNC_RULE = "StepFunctionsGetEventsForECSTaskRule";
 const LEDGER_PORT = 5432;
 const LEDGER_DATABASE = "factory";
 const MONTHLY_BUDGET_USD = 50;
@@ -89,6 +99,8 @@ export class FactoryStack extends Stack {
   /** Test only: the worker's settings and roles with the boundary-check image. */
   readonly boundaryCheckTaskDefinition: FargateTaskDefinition;
   readonly ledger: DatabaseCluster;
+  readonly stateMachine: StateMachine;
+  readonly webhook: NodejsFunction;
 
   constructor(scope: Construct, id: string, props: FactoryStackProps) {
     super(scope, id, props);
@@ -203,6 +215,75 @@ export class FactoryStack extends Stack {
     });
     this.boundaryCheckTaskDefinition.addContainer(WORKER_CONTAINER, { ...container, image: image("BoundaryCheckImage", BOUNDARY_CHECK_TARGET) });
 
+    // Orchestration: the work item's state machine, which runs the worker and nothing else (ADR 0002).
+    const workerRoleArns = [this.taskDefinition.taskRole.roleArn, this.taskDefinition.obtainExecutionRole().roleArn];
+    const inCluster = { ArnEquals: { "ecs:cluster": this.cluster.clusterArn } };
+    const stateMachineRole = new Role(this, "StateMachineRole", { assumedBy: new ServicePrincipal("states.amazonaws.com") });
+    stateMachineRole.addToPolicy(new PolicyStatement({ actions: ["ecs:RunTask"], resources: [this.taskDefinition.taskDefinitionArn], conditions: inCluster }));
+    stateMachineRole.addToPolicy(
+      new PolicyStatement({
+        actions: ["ecs:StopTask", "ecs:DescribeTasks"],
+        resources: [this.formatArn({ service: "ecs", resource: "task", resourceName: `${this.cluster.clusterName}/*` })],
+      }),
+    );
+    stateMachineRole.addToPolicy(new PolicyStatement({ actions: ["iam:PassRole"], resources: workerRoleArns }));
+    stateMachineRole.addToPolicy(
+      new PolicyStatement({
+        actions: ["events:PutTargets", "events:PutRule", "events:DescribeRule"],
+        resources: [this.formatArn({ service: "events", resource: "rule", resourceName: ECS_SYNC_RULE })],
+      }),
+    );
+    const workerTask = {
+      cluster: this.cluster.clusterArn,
+      taskDefinition: this.taskDefinition.taskDefinitionArn,
+      subnets: vpc.publicSubnets.map((subnet) => subnet.subnetId),
+      securityGroup: workerSecurityGroup.securityGroupId,
+      container: WORKER_CONTAINER,
+    };
+    this.stateMachine = new StateMachine(this, "StateMachine", {
+      stateMachineName: STATE_MACHINE_NAME,
+      definitionBody: DefinitionBody.fromString(this.toJsonString(definition(workerTask))),
+      role: stateMachineRole,
+    });
+
+    // The webhook: outside the VPC, no ledger; it starts executions and approve tasks only.
+    this.webhook = new NodejsFunction(this, "Webhook", {
+      entry: resolve(REPO_ROOT, WEBHOOK_ENTRY),
+      handler: "handler",
+      runtime: Runtime.NODEJS_24_X,
+      architecture: Architecture.ARM_64,
+      memorySize: 256,
+      // GitHub waits 10 seconds for an answer.
+      timeout: Duration.seconds(10),
+      logGroup: new LogGroup(this, "WebhookLogs", { retention: RetentionDays.TWO_WEEKS, removalPolicy: RemovalPolicy.DESTROY }),
+      projectRoot: REPO_ROOT,
+      depsLockFilePath: resolve(REPO_ROOT, "pnpm-lock.yaml"),
+      // The pinned AWS SDK clients go into the bundle, not the runtime's own.
+      bundling: { externalModules: [], minify: true, target: "node24" },
+      environment: {
+        [WEBHOOK_ENV.stateMachineArn]: this.stateMachine.stateMachineArn,
+        [WEBHOOK_ENV.repository]: props.github.repository,
+        [WEBHOOK_ENV.owner]: props.github.owner,
+        [WEBHOOK_ENV.cluster]: workerTask.cluster,
+        [WEBHOOK_ENV.taskDefinition]: workerTask.taskDefinition,
+        [WEBHOOK_ENV.subnets]: Fn.join(",", workerTask.subnets),
+        [WEBHOOK_ENV.securityGroup]: workerTask.securityGroup,
+        [WEBHOOK_ENV.container]: WORKER_CONTAINER,
+        [WEBHOOK_ENV.secretParameter]: PARAMETERS.githubWebhookSecret,
+      },
+    });
+    this.webhook.addToRolePolicy(new PolicyStatement({ actions: ["states:StartExecution"], resources: [this.stateMachine.stateMachineArn] }));
+    this.webhook.addToRolePolicy(new PolicyStatement({ actions: ["ecs:RunTask"], resources: [this.taskDefinition.taskDefinitionArn], conditions: inCluster }));
+    this.webhook.addToRolePolicy(new PolicyStatement({ actions: ["iam:PassRole"], resources: workerRoleArns }));
+    this.webhook.addToRolePolicy(
+      new PolicyStatement({
+        actions: ["ssm:GetParameter"],
+        resources: [this.formatArn({ service: "ssm", resource: "parameter", resourceName: PARAMETERS.githubWebhookSecret.slice(1) })],
+      }),
+    );
+    // The signature is checked in code (design, "Webhook Lambda").
+    const webhookUrl = this.webhook.addFunctionUrl({ authType: FunctionUrlAuthType.NONE });
+
     // Budget: the whole account, which the factory shares (owner decision, 2026-11-02).
     const subscribers = [{ subscriptionType: "EMAIL", address: props.budgetEmail }];
     new CfnBudget(this, "MonthlyBudget", {
@@ -224,7 +305,7 @@ export class FactoryStack extends Stack {
       ],
     });
 
-    // What a one-off RunTask needs (the cloud tests, and the state machine in step 3).
+    // What a one-off RunTask needs (the cloud tests), and the webhook's address for the App's settings.
     new CfnOutput(this, "ClusterArn", { value: this.cluster.clusterArn });
     new CfnOutput(this, "WorkerTaskDefinitionArn", { value: this.taskDefinition.taskDefinitionArn });
     new CfnOutput(this, "BoundaryCheckTaskDefinitionArn", { value: this.boundaryCheckTaskDefinition.taskDefinitionArn });
@@ -232,6 +313,8 @@ export class FactoryStack extends Stack {
     new CfnOutput(this, "WorkerSubnetIds", { value: Fn.join(",", vpc.publicSubnets.map((subnet) => subnet.subnetId)) });
     new CfnOutput(this, "WorkerSecurityGroupId", { value: workerSecurityGroup.securityGroupId });
     new CfnOutput(this, "WorkerLogGroupName", { value: logGroup.logGroupName });
+    new CfnOutput(this, "StateMachineArn", { value: this.stateMachine.stateMachineArn });
+    new CfnOutput(this, "WebhookUrl", { value: webhookUrl.url });
   }
 }
 

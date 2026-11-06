@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeForge } from "@vocab/factory-forge/testing";
-import { findWorkItemByIssue, LedgerRecorder, listAttempts, migrate } from "@vocab/factory-ledger";
+import { findWorkItemByIssue, LedgerRecorder, listAttempts, migrate, setWorkItemState } from "@vocab/factory-ledger";
 import { createTestDatabase, type TestDatabase } from "@vocab/factory-ledger/testing";
 import { loadRole, type Role } from "@vocab/factory-roles";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -156,6 +156,23 @@ describe("factory run", () => {
     expect(out).toContain("awaiting-proposal-approval");
     const { rows } = await db.pool.query<{ n: string }>("SELECT count(*) AS n FROM work_items WHERE issue_number = $1", [ISSUE.number]);
     expect(Number(rows[0]?.n)).toBe(1);
+  });
+
+  it("treats a proposal-approved work item as past --until proposal", async () => {
+    const factory = cli();
+    expect((await factory.run(RUN, [VALID])).code).toBe(EXIT_CODES.ok);
+    const workItem = await findWorkItemByIssue(db.pool, ISSUE.number);
+    await setWorkItemState(db.pool, workItem?.id ?? "", "proposal-approved");
+    const comments = forge.comments.length;
+
+    // No scripted steps: any agent run would fail the fake.
+    const { code, out } = await factory.run(RUN);
+
+    expect(code).toBe(EXIT_CODES.ok);
+    expect(factory.calls).toHaveLength(1);
+    expect(forge.comments).toHaveLength(comments);
+    expect(out).toContain("proposal-approved");
+    expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("proposal-approved");
   });
 
   it("re-running an escalated work item runs no agent and exits non-zero", async () => {
