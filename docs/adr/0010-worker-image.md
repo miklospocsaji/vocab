@@ -1,6 +1,6 @@
 # 0010 Worker image
 
-Status: accepted (2026-11-04; owner decision on Bash of 2026-11-04)
+Status: accepted (2026-11-04; owner decision on Bash of 2026-11-04); amended 2026-11-06 (boundary-check image)
 
 ## Context
 
@@ -33,3 +33,16 @@ From M2, every state runs as a Fargate task from one `factory-worker` image (bri
 - The spike's draft image was about 1.2 GB; the built image is about 1 GB. That costs little to store, but it slows task start-up, and every state pays that start-up.
 - Secrets reach the image only as environment at run time, and a docker test proves the build leaves them out.
 - An image without Bash roles says nothing about M3's. Its decision may change the base or the platform for those roles.
+
+## Amendment 2026-11-06: the boundary-check image
+
+The scenario "Boundaries hold in Fargate" runs the live boundary tests in a Fargate task. The worker image cannot run them: ECS overrides a container's command but not its entry point, and the image holds no Vitest. The owner chose a second, test-only image (2026-11-06) over shipping Vitest in the worker.
+
+- The Dockerfile has a `boundary-check` target, built `FROM worker`: the worker image with Vitest and the dev dependencies installed on top, an empty entry point and the same non-root user. It has no `COPY` or `ADD`, so it changes none of the worker's files. Its last stage is a bare `FROM worker`, so a build without a target is the production image.
+- The stack has a second task definition for it, with the worker's task role, execution role, size, platform, environment, secrets and logs. The state machine never runs it.
+- What makes the check stand for the worker:
+  - CDK assertions: the two task definitions are equal in everything but the image, and both images come from the same Dockerfile and a byte-identical build context. A unit test pins the Dockerfile's stage layout.
+  - The cloud test, before it runs anything: the deployed task definitions are equal in everything but the image, and the deployed worker image's layers are, in order, the first layers of the check image.
+  - The local container check (`container.live.test.ts`) builds the same target, which replaces `live-check.Dockerfile`.
+- What it cannot prove: the tests run the role runner from Vitest with throwaway probe roles, not through the worker's entry point, as they do locally. The dev dependencies are installed into `/app/node_modules` from the frozen lockfile, which leaves the production packages' versions unchanged. And `/app/node_modules` is writable by the factory user in the check image only, which makes the check's environment weaker than the worker's, not stronger.
+- Cost: one more image in the CDK assets repository. Its first layers are the worker's, and ECR stores them once.

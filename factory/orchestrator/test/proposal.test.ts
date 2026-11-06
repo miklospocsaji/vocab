@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ProposalResult } from "@vocab/factory-artifacts";
 import { FakeForge } from "@vocab/factory-forge/testing";
 import { findWorkItemByIssue, LedgerRecorder, listAttempts, migrate, type WorkItemRow } from "@vocab/factory-ledger";
 import { createTestDatabase, type TestDatabase } from "@vocab/factory-ledger/testing";
@@ -99,7 +100,7 @@ beforeEach(() => {
 afterEach(async () => {
   vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
-  await db.pool.query("TRUNCATE work_items, attempts, messages, events");
+  await db.pool.query("TRUNCATE work_items, attempts, messages, events, approvals");
 });
 
 describe("proposal", () => {
@@ -173,6 +174,21 @@ describe("proposal", () => {
       expect.objectContaining({ n: 2, outcome: "succeeded", failureReason: null, authMode: "subscription" }),
     ]);
     expect(git(remote, "diff-tree", "--no-commit-id", "--name-only", "-r", remoteHead(CHANGE_ID))).toContain(`${CHANGE}/specs/vocab-import/spec.md`);
+  });
+
+  it("Scenario: Proposal result is stored in the ledger", async () => {
+    const workItem = await workItemInProposal();
+    const { ctx } = context([NO_DELTA_STEP, VALID]);
+
+    await proposal(ctx, workItem);
+
+    // The succeeded attempt holds the role's validated result; the failed one holds none.
+    const attempts = await listAttempts(db.pool, workItem.id);
+    expect(attempts.map((attempt) => [attempt.outcome, attempt.result])).toEqual([
+      ["failed", null],
+      ["succeeded", validResult(CHANGE_ID)],
+    ]);
+    expect(ProposalResult.safeParse(attempts[1]?.result).success).toBe(true);
   });
 
   it("Scenario: Three failed attempts escalate", async () => {

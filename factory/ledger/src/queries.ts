@@ -15,6 +15,8 @@ export interface WorkItemRow {
   changeId: string;
   branch: string;
   state: string;
+  /** The Step Functions execution that created it; null for a local run. */
+  executionArn: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -24,6 +26,7 @@ export interface NewWorkItem {
   changeId: string;
   branch: string;
   state: string;
+  executionArn?: string;
 }
 
 export interface AttemptRow {
@@ -39,6 +42,8 @@ export interface AttemptRow {
   failureReason: FailureReason | null;
   authMode: AuthMode | null;
   costUsdEstimate: number | null;
+  /** The role's validated result, on a succeeded attempt only (until M3 moves results to S3). */
+  result: unknown;
 }
 
 export interface NewAttempt {
@@ -47,7 +52,25 @@ export interface NewAttempt {
   role: string;
 }
 
-export type AttemptEnd = { outcome: "succeeded" } | { outcome: "failed"; failureReason: FailureReason };
+export type AttemptEnd = { outcome: "succeeded"; result?: unknown } | { outcome: "failed"; failureReason: FailureReason };
+
+export type ApprovalState = "open" | "closed";
+
+export interface ApprovalRow {
+  id: string;
+  workItemId: string;
+  state: ApprovalState;
+  taskToken: string;
+  requestedAt: Date;
+  resolvedAt: Date | null;
+  /** The login that resolved it. */
+  resolvedBy: string | null;
+}
+
+export interface NewApproval {
+  workItemId: string;
+  taskToken: string;
+}
 
 export interface MessageRow {
   id: string;
@@ -71,8 +94,30 @@ export class ChangeIdTaken extends Error {
   }
 }
 
+export class IssueHasWorkItem extends Error {
+  readonly issueNumber: number;
+
+  constructor(issueNumber: number, options?: ErrorOptions) {
+    super(`issue #${String(issueNumber)} has a work item already`, options);
+    this.name = "IssueHasWorkItem";
+    this.issueNumber = issueNumber;
+  }
+}
+
+export class ApprovalAlreadyOpen extends Error {
+  readonly workItemId: string;
+
+  constructor(workItemId: string, options?: ErrorOptions) {
+    super(`work item ${workItemId} has an open approval already`, options);
+    this.name = "ApprovalAlreadyOpen";
+    this.workItemId = workItemId;
+  }
+}
+
 const UNIQUE_VIOLATION = "23505";
 const CHANGE_ID_KEY = "work_items_change_id_key";
+const ISSUE_NUMBER_KEY = "work_items_issue_number_key";
+const ONE_OPEN_APPROVAL = "approvals_one_open_idx";
 
 interface WorkItemRecord {
   id: string;
@@ -80,6 +125,7 @@ interface WorkItemRecord {
   change_id: string;
   branch: string;
   state: string;
+  execution_arn: string | null;
   created_at: Date;
   updated_at: Date;
 }
@@ -96,6 +142,17 @@ interface AttemptRecord {
   failure_reason: FailureReason | null;
   auth_mode: AuthMode | null;
   cost_usd_estimate: string | null;
+  result: unknown;
+}
+
+interface ApprovalRecord {
+  id: string;
+  work_item_id: string;
+  state: ApprovalState;
+  task_token: string;
+  requested_at: Date;
+  resolved_at: Date | null;
+  resolved_by: string | null;
 }
 
 interface MessageRecord {
@@ -110,9 +167,10 @@ interface MessageRecord {
   raw: unknown;
 }
 
-const WORK_ITEM_COLUMNS = "id, issue_number, change_id, branch, state, created_at, updated_at";
+const WORK_ITEM_COLUMNS = "id, issue_number, change_id, branch, state, execution_arn, created_at, updated_at";
 const ATTEMPT_COLUMNS =
-  "id, work_item_id, state, role, n, started_at, ended_at, outcome, failure_reason, auth_mode, cost_usd_estimate";
+  "id, work_item_id, state, role, n, started_at, ended_at, outcome, failure_reason, auth_mode, cost_usd_estimate, result";
+const APPROVAL_COLUMNS = "id, work_item_id, state, task_token, requested_at, resolved_at, resolved_by";
 
 function toWorkItem(row: WorkItemRecord): WorkItemRow {
   return {
@@ -121,6 +179,7 @@ function toWorkItem(row: WorkItemRecord): WorkItemRow {
     changeId: row.change_id,
     branch: row.branch,
     state: row.state,
+    executionArn: row.execution_arn,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -139,6 +198,7 @@ function toAttempt(row: AttemptRecord): AttemptRow {
     failureReason: row.failure_reason,
     authMode: row.auth_mode,
     costUsdEstimate: row.cost_usd_estimate === null ? null : Number(row.cost_usd_estimate),
+    result: row.result,
   };
 }
 
@@ -156,27 +216,43 @@ function toMessage(row: MessageRecord): MessageRow {
   };
 }
 
+function toApproval(row: ApprovalRecord): ApprovalRow {
+  return {
+    id: row.id,
+    workItemId: row.work_item_id,
+    state: row.state,
+    taskToken: row.task_token,
+    requestedAt: row.requested_at,
+    resolvedAt: row.resolved_at,
+    resolvedBy: row.resolved_by,
+  };
+}
+
 function only<T>(rows: T[], what: string): T {
   const [row] = rows;
   if (row === undefined) throw new Error(`${what}: no row`);
   return row;
 }
 
-/** Rejects with ChangeIdTaken when another work item has the change id. */
+/**
+ * Rejects with ChangeIdTaken when another work item has the change id, and with
+ * IssueHasWorkItem when the issue has one already (a concurrent Intake that lost).
+ */
 export async function createWorkItem(db: Db, item: NewWorkItem): Promise<WorkItemRow> {
   try {
     const { rows } = await db.query<WorkItemRecord>(
-      `INSERT INTO work_items (issue_number, change_id, branch, state) VALUES ($1, $2, $3, $4) RETURNING ${WORK_ITEM_COLUMNS}`,
-      [item.issueNumber, item.changeId, item.branch, item.state],
+      `INSERT INTO work_items (issue_number, change_id, branch, state, execution_arn) VALUES ($1, $2, $3, $4, $5) RETURNING ${WORK_ITEM_COLUMNS}`,
+      [item.issueNumber, item.changeId, item.branch, item.state, item.executionArn ?? null],
     );
     return toWorkItem(only(rows, "createWorkItem"));
   } catch (error) {
     if (isUniqueViolation(error, CHANGE_ID_KEY)) throw new ChangeIdTaken(item.changeId, { cause: error });
+    if (isUniqueViolation(error, ISSUE_NUMBER_KEY)) throw new IssueHasWorkItem(item.issueNumber, { cause: error });
     throw error;
   }
 }
 
-/** The issue's work item; the newest one should an issue ever have several. */
+/** The issue's work item; an issue has at most one (migration 0002). */
 export async function findWorkItemByIssue(db: Db, issueNumber: number): Promise<WorkItemRow | undefined> {
   const { rows } = await db.query<WorkItemRecord>(
     `SELECT ${WORK_ITEM_COLUMNS} FROM work_items WHERE issue_number = $1 ORDER BY id DESC LIMIT 1`,
@@ -211,14 +287,15 @@ export async function openAttempt(db: Db, attempt: NewAttempt): Promise<AttemptR
   return toAttempt(only(rows, "openAttempt"));
 }
 
-/** Closes an open attempt; closing one twice is an error. */
+/** Closes an open attempt, with the role's result if it succeeded; closing one twice is an error. */
 export async function closeAttempt(db: Db, attemptId: string, end: AttemptEnd): Promise<AttemptRow> {
   const failureReason = end.outcome === "failed" ? end.failureReason : null;
+  const result = end.outcome === "succeeded" && end.result !== undefined ? JSON.stringify(end.result) : null;
   const { rows } = await db.query<AttemptRecord>(
-    `UPDATE attempts SET ended_at = clock_timestamp(), outcome = $2, failure_reason = $3
+    `UPDATE attempts SET ended_at = clock_timestamp(), outcome = $2, failure_reason = $3, result = $4::jsonb
      WHERE id = $1 AND ended_at IS NULL
      RETURNING ${ATTEMPT_COLUMNS}`,
-    [attemptId, end.outcome, failureReason],
+    [attemptId, end.outcome, failureReason, result],
   );
   if (rows[0] === undefined) throw new Error(`attempt ${attemptId} is not open`);
   return toAttempt(rows[0]);
@@ -283,4 +360,62 @@ export async function listAttemptUsage(db: Db, workItemId: string): Promise<Atte
     cacheReadTokens: Number(row.cache_read),
     cacheCreationTokens: Number(row.cache_creation),
   }));
+}
+
+/** Stores an open approval with its task token; rejects with ApprovalAlreadyOpen if one is open. */
+export async function openApproval(db: Db, approval: NewApproval): Promise<ApprovalRow> {
+  try {
+    const { rows } = await db.query<ApprovalRecord>(
+      `INSERT INTO approvals (work_item_id, state, task_token) VALUES ($1, 'open', $2) RETURNING ${APPROVAL_COLUMNS}`,
+      [approval.workItemId, approval.taskToken],
+    );
+    return toApproval(only(rows, "openApproval"));
+  } catch (error) {
+    if (isUniqueViolation(error, ONE_OPEN_APPROVAL)) throw new ApprovalAlreadyOpen(approval.workItemId, { cause: error });
+    throw error;
+  }
+}
+
+export async function findOpenApproval(db: Db, workItemId: string): Promise<ApprovalRow | undefined> {
+  const { rows } = await db.query<ApprovalRecord>(`SELECT ${APPROVAL_COLUMNS} FROM approvals WHERE work_item_id = $1 AND state = 'open'`, [
+    workItemId,
+  ]);
+  return rows[0] === undefined ? undefined : toApproval(rows[0]);
+}
+
+/**
+ * Closes the work item's open approval, resolved by `resolvedBy`, and returns it with its task
+ * token. One statement, so of two concurrent closes only one gets the approval; the other, and
+ * a close with nothing open, get undefined.
+ */
+export async function closeApproval(db: Db, workItemId: string, resolvedBy: string): Promise<ApprovalRow | undefined> {
+  const { rows } = await db.query<ApprovalRecord>(
+    `UPDATE approvals SET state = 'closed', resolved_at = clock_timestamp(), resolved_by = $2
+     WHERE work_item_id = $1 AND state = 'open'
+     RETURNING ${APPROVAL_COLUMNS}`,
+    [workItemId, resolvedBy],
+  );
+  return rows[0] === undefined ? undefined : toApproval(rows[0]);
+}
+
+/**
+ * Opens a closed approval again, so the owner can retry after resuming the execution failed.
+ * Rejects with ApprovalAlreadyOpen if the work item has another open approval.
+ */
+export async function reopenApproval(db: Db, approvalId: string): Promise<ApprovalRow> {
+  let rows: ApprovalRecord[];
+  try {
+    ({ rows } = await db.query<ApprovalRecord>(
+      `UPDATE approvals SET state = 'open', resolved_at = NULL, resolved_by = NULL WHERE id = $1 RETURNING ${APPROVAL_COLUMNS}`,
+      [approvalId],
+    ));
+  } catch (error) {
+    if (isUniqueViolation(error, ONE_OPEN_APPROVAL)) {
+      const workItemId = (await db.query<{ work_item_id: string }>("SELECT work_item_id FROM approvals WHERE id = $1", [approvalId])).rows[0]?.work_item_id;
+      throw new ApprovalAlreadyOpen(workItemId ?? "unknown", { cause: error });
+    }
+    throw error;
+  }
+  if (rows[0] === undefined) throw new Error(`approval ${approvalId} not found`);
+  return toApproval(rows[0]);
 }

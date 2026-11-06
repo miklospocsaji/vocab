@@ -17,41 +17,41 @@ Unit tests run in `pnpm check` with fakes for GitHub and AWS and the real local 
 
 ### Decisions and package
 
-- [ ] 2.1 Write ADR 0008 "No worker egress control", following `design.md`. Amend ADR 0003.
-- [ ] 2.2 Create the `infra` package (`@vocab/infra`):
+- [x] 2.1 Write ADR 0008 "No worker egress control", following `design.md`. Amend ADR 0003.
+- [x] 2.2 Create the `infra` package (`@vocab/infra`):
   - `aws-cdk-lib`, `constructs`, `aws-cdk` and `esbuild`, pinned exactly
   - `infra/bin/factory.ts` and `infra/cdk.json`, with the App id, installation id, slug and the owner's login (`miklospocsaji`) as context
   - root scripts `infra:synth`, `infra:diff` and `infra:deploy`
   - a `cloud` Vitest project and a root `pnpm test:cloud` script, with cloud tests excluded from `pnpm test`
 
-  Confirm `cdk bootstrap aws://<account>/eu-central-1` with the owner and run it.
+  Confirm `cdk bootstrap aws://<account>/eu-central-1` with the owner and run it. (Done 2026-11-06 with the owner's `vocab` profile, account 943081072466.)
 
 ### Stack
 
-- [ ] 2.3 Failing CDK assertion tests for `infra/factory-stack.ts`. Scenario: Ledger is closed to everything but the worker. Also cover:
+- [x] 2.3 Failing CDK assertion tests for `infra/factory-stack.ts`. Scenario: Ledger is closed to everything but the worker. Also cover:
   - no NAT Gateway, NAT instance, private subnet or VPC endpoint
   - Aurora Serverless v2: min capacity 0, max 1, deletion protection on
   - the task definition takes secrets through `secrets` only, and runs with a public IP and no security group ingress
   - the task role may only send task success and failure to this state machine's tasks
   - log retention is 14 days
   - a $50 monthly budget with no cost filter notifies the `budgetEmail` context
-- [ ] 2.4 Write `infra/factory-stack.ts` with the VPC, Aurora, the worker and the budget (the state machine and the Lambda come in step 3).
+- [x] 2.4 Write `infra/factory-stack.ts` with the VPC, Aurora, the worker and the budget (the state machine and the Lambda come in step 3), and the test-only boundary-check task definition.
 
 ### Ledger
 
-- [ ] 2.5 Failing tests against the local Postgres for migration 0002 and its queries:
+- [x] 2.5 Failing tests against the local Postgres for migration 0002 and its queries:
   - `issue_number` is unique
   - the execution ARN is recorded on the work item
   - one open approval per work item; an approval closes with `resolved_by` and can reopen
   - Scenario: Proposal result is stored in the ledger (a successful attempt holds a result that parses with `ProposalResult`)
 
   Also: `connectionFromSecret` builds a TLS config that verifies against the committed CA bundle, whose SHA-256 matches the recorded one.
-- [ ] 2.6 Write `factory/ledger/migrations/0002_cloud.sql`, the queries, `connectionFromSecret` and the RDS CA bundle. Store the result on the attempt in the `proposal` handler.
+- [x] 2.6 Write `factory/ledger/migrations/0002_cloud.sql`, the queries, `connectionFromSecret` and the RDS CA bundle. Store the result on the attempt in the `proposal` handler.
 
 ### Deploy and verify the boundary
 
-- [ ] 2.7 Failing cloud test in `factory/roles/test/boundaries.cloud.test.ts`, which runs the worker task definition as a one-off Fargate task with a command override running the boundary live tests. Scenario: Boundaries hold in Fargate (api-key mode, budget under $0.10). Also run `bwrap` in the task and record whether it can start, as input to M3. A failure there does not fail M2.
-- [ ] 2.8 Confirm with the owner, then `pnpm infra:deploy`. Run `pnpm test:cloud` for task 2.7 and record the result in `design.md`.
+- [x] 2.7 Failing cloud test in `factory/roles/test/boundaries.cloud.test.ts`, which runs the boundary-check task definition (the worker's, with the worker image plus Vitest; owner decision of 2026-11-06, ADR 0010) as a one-off Fargate task with a command override running the boundary live tests. It first checks that the deployed check stands for the worker: equal task definitions but for the image, and the worker image's layers as the check image's first layers. Scenario: Boundaries hold in Fargate (api-key mode, budget under $0.10). Also run `bwrap` in the task and record whether it can start, as input to M3. A failure there does not fail M2.
+- [x] 2.8 Confirm with the owner, then `pnpm infra:deploy`. Run `pnpm test:cloud` for task 2.7 and record the result in `design.md`.
 
 ## Step 3: State machine and Lambda
 

@@ -14,8 +14,12 @@
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm spec:validate",
     "test:live": "vitest run --project live",
     "test:docker": "vitest run --project docker",
+    "test:cloud": "vitest run --project cloud",
     "db:up": "docker compose up -d --wait ledger",
-    "factory": "node factory/cli/src/main.ts"
+    "factory": "node factory/cli/src/main.ts",
+    "infra:synth": "pnpm --dir infra exec cdk synth",
+    "infra:diff": "pnpm --dir infra exec cdk diff",
+    "infra:deploy": "pnpm --dir infra exec cdk deploy"
   },
   "dependencies": {
     "@fission-ai/openspec": "1.15.0"

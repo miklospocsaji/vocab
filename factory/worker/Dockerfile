@@ -2,6 +2,8 @@
 # The factory-worker image (ADR 0010). Build context: the repository root, filtered by the
 # allowlist in Dockerfile.dockerignore. Run: factory-worker <state> --issue <n>.
 #   docker build --platform linux/amd64 -f factory/worker/Dockerfile -t factory-worker .
+# The default build is the worker. `--target boundary-check` builds the test-only check image
+# on top of it (ADR 0010, amendment of 2026-11-06).
 
 # Moving the digest is a deliberate change (ADR 0010).
 ARG NODE_IMAGE=node:24-bookworm-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c
@@ -18,7 +20,7 @@ RUN /opt/pnpm/bin/pnpm install --frozen-lockfile --prod --filter "@vocab/factory
  && rm -rf /root/.cache /root/.local/share/pnpm /root/.npm
 COPY . .
 
-FROM ${NODE_IMAGE}
+FROM ${NODE_IMAGE} AS worker
 # bubblewrap and socat: without them the SDK refuses to start any session, Bash or not, since
 # the runner requires the sandbox (ADR 0007). With them, sessions start, and a Bash command
 # fails because the sandbox cannot create its namespaces here (owner decision, 2026-11-06).
@@ -39,3 +41,22 @@ ENV NODE_ENV=production \
 USER factory:factory
 WORKDIR /home/factory
 ENTRYPOINT ["node", "/app/factory/worker/src/main.ts"]
+
+# Test only, never run by the state machine: the worker image with Vitest and the dev
+# dependencies added, for the boundary tests in a container (container.live.test.ts) and on
+# Fargate (boundaries.cloud.test.ts). It adds layers on top of the worker and changes none of
+# its files: no COPY or ADD. The live setup loads .env.local only if it exists, so the token or
+# key comes from the environment. Vitest keeps its caches in node_modules, made the one
+# writable folder in /app.
+FROM worker AS boundary-check
+USER root
+RUN npm install --global --ignore-scripts --prefix /opt/pnpm pnpm@12.15.0 \
+ && cd /app && CI=true /opt/pnpm/bin/pnpm install --frozen-lockfile --filter "@vocab/factory-worker..." --filter "vocab" \
+ && rm -rf /root/.cache /root/.local/share/pnpm /root/.npm /opt/pnpm \
+ && chown factory:factory /app/node_modules
+WORKDIR /app
+USER factory:factory
+ENTRYPOINT []
+
+# The default build: the worker, unchanged.
+FROM worker

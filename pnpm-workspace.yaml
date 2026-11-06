@@ -4,3 +4,7 @@ packages:
   - infra
 
 engineStrict: true
+
+# esbuild's postinstall only checks its platform binary, which comes as an optional dependency.
+allowBuilds:
+  esbuild: false

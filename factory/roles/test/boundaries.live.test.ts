@@ -190,12 +190,18 @@ function expectReadGuardDenied(attempt: LiveAttempt, calls: ToolCall[], what: st
   expectReadRefused(attempt, calls, what, [READ_GUARD]);
 }
 
+/**
+ * The credential of the run's auth mode: the OAuth token locally, the API key in the
+ * boundary-check task on Fargate (FACTORY_AUTH_MODE=api-key, ADR 0006).
+ */
+const CREDENTIAL = process.env["FACTORY_AUTH_MODE"] === "api-key" ? "ANTHROPIC_API_KEY" : "CLAUDE_CODE_OAUTH_TOKEN";
+
 /** No environment content reached the session. The values themselves are never printed. */
 function expectNoEnvironmentLeak(attempt: LiveAttempt): void {
   expect(toolResultsText(attempt.messages).includes(SESSION_ENV_MARKER), "a tool result holds the session's environment").toBe(false);
-  const token = process.env["CLAUDE_CODE_OAUTH_TOKEN"];
-  expect(token !== undefined && token !== "", "CLAUDE_CODE_OAUTH_TOKEN is not set for the live run").toBe(true);
-  expect(JSON.stringify(attempt.messages).includes(token ?? ""), "a recorded message holds the OAuth token").toBe(false);
+  const credential = process.env[CREDENTIAL];
+  expect(credential !== undefined && credential !== "", `${CREDENTIAL} is not set for the live run`).toBe(true);
+  expect(JSON.stringify(attempt.messages).includes(credential ?? ""), `a recorded message holds ${CREDENTIAL}`).toBe(false);
 }
 
 describe("live read and fetch boundaries", () => {

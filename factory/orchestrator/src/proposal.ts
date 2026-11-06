@@ -84,7 +84,8 @@ export async function proposal(ctx: ProposalContext, item: WorkItemRow): Promise
       if (error.reason === "auth-mode-mismatch") break;
       continue;
     }
-    await closeAttempt(db, attempt.id, { outcome: "succeeded" });
+    // The validated result stays on its attempt, so later states (the summary in the cloud) read it from the ledger.
+    await closeAttempt(db, attempt.id, { outcome: "succeeded", result });
 
     await commitChange({
       worktree,

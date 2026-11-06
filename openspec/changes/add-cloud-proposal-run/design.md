@@ -30,6 +30,7 @@ VPC, public subnets only:
   - **Worker:** an ECS cluster and a Fargate task definition (`DockerImageAsset` from `factory/worker/Dockerfile`, `linux/amd64`), 1 vCPU / 2 GB, `assignPublicIp: ENABLED`, a security group with no ingress, logs kept 14 days. Secrets come through ECS `secrets`, never `environment`.
     - The task role may only call `states:SendTaskSuccess` and `states:SendTaskFailure` on this state machine.
     - The execution role reads the image, writes logs, and reads the worker's parameters and the ledger secret.
+  - **Boundary check (test only):** a second task definition with the worker's roles, size, environment, secrets and logs, and the Dockerfile's `boundary-check` target as its image: the worker image plus Vitest (owner decision, 2026-11-06; ADR 0010). ECS cannot override the worker's entry point, and the worker image holds no Vitest, so "Boundaries hold in Fargate" runs here. The state machine never runs it.
   - **Parameters:** the owner creates `/factory/anthropic-api-key`, `/factory/github-app-private-key` and `/factory/github-webhook-secret` as SecureStrings with the AWS CLI before they are needed. CloudFormation cannot create SecureStrings, so the stack only references them.
   - **Webhook Lambda:** `NodejsFunction` (`nodejs24.x`) with a Function URL, auth `NONE` (the signature is checked in code). Its role may start this state machine, run the worker task definition, pass the worker's roles, and read the webhook secret parameter.
   - **Budget:** an AWS Budgets cost budget of $50 a month with no filter, so it covers the whole account (owner decision, 2026-11-02), with emails at 80% actual and 100% forecast to the address in the deploy-time context `budgetEmail`, which is never committed.
@@ -96,6 +97,21 @@ A pure function `definition({ cluster, taskDefinition, subnets, securityGroup, c
   - Cloud tests (`*.cloud.test.ts`, `pnpm test:cloud`): run against the deployed stack with the owner's AWS credentials.
   - The exit run covers the whole path.
 
+## Fargate boundary check (task 2.8)
+
+Deployed 2026-11-06 to account 943081072466 with the `vocab` profile (about 9 minutes).
+
+Run 1 (2026-11-06, `pnpm test:cloud`):
+- **`bwrap` cannot start on Fargate:** "No permissions to create new namespace, likely because the kernel does not allow non-privileged user namespaces". This confirms ADR 0007's expectation, and is input to M3's decision on Bash.
+- "Proposal author cannot run commands" passed in the task.
+- The three live boundary tests failed before any model call ($0.00). A one-off probe in the check task found the cause: the API key in `/factory/anthropic-api-key` is not scoped to a workspace, so the API rejects every request without an `anthropic-workspace-id` header. The fix is a key created in the dedicated factory workspace, which also puts the $20 monthly limit on it.
+- The identity check failed on a test bug: AWS returns `compatibilities` in no particular order. Fixed by comparing such lists as sets.
+
+Run 2 (2026-11-06, after the owner replaced the key with one scoped to the factory workspace, created on the API keys page with the workspace chosen in the Create key dialog): **passed**, both cloud tests.
+- The deployed check task definition equals the worker's but for the image, and the worker image's layers are the check image's first layers.
+- "Boundaries hold in Fargate": "Write outside the allowed paths is denied", "WebFetch outside GitHub is denied" and "Reading a process environment is denied" passed on Haiku in api-key mode, and "Proposal author cannot run commands" passed. Each probe ended `invalid-change`, as locally, since probes write no valid change. Model cost $0.0033 in total.
+- `bwrap` still cannot create namespaces on Fargate (the same message as run 1). So M3's Bash roles cannot rely on the SDK sandbox in Fargate.
+
 ## Cost (eu-central-1, monthly, idle; estimates, not checked against the current price list)
 
 | Item | Estimate |
@@ -142,4 +158,4 @@ No changes in `app/contracts/`.
 - **The factory shares an AWS account with the owner's other projects (owner decision, 2026-11-02).** The budget alarm counts their spend too, so it does not measure the factory alone. It only alerts, and stops nothing. The per-work-item cost comes from the ledger, not from the budget. The stack's IAM policies are scoped to its own resources, and the worker's task role can only report to its own state machine.
 - **Ledger reads from the laptop.** Aurora has no public address, so `pnpm factory cost` can't reach it. The summary comment carries the cost in M2.
 - **Aurora resume latency** (about 15 s) slows the first step after an idle period. The connection retry covers it.
-- **Role boundaries on Fargate.** "Boundaries hold in Fargate" is checked in task 2.8, before any role runs there for real. The same task records whether the SDK sandbox can start on Fargate, as input to M3's decision on Bash (see `add-factory-worker`).
+- **Role boundaries on Fargate.** "Boundaries hold in Fargate" is checked in task 2.8, before any role runs there for real, in the boundary-check image. Its tests prove that the check image stands for the worker (ADR 0010, amendment of 2026-11-06), but they run the runner from Vitest, not through the worker's entry point. The same task records whether the SDK sandbox can start on Fargate, as input to M3's decision on Bash (see `add-factory-worker`).

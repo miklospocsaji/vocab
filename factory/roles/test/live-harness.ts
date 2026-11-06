@@ -235,11 +235,21 @@ export function outcomeOf(attempt: LiveAttempt): string {
   return attempt.outcome instanceof AttemptFailed ? attempt.outcome.reason : "succeeded";
 }
 
+/** The first line of a failed attempt's evidence, shortened, so a run that never reached the model says why. */
+function failureLine(attempt: LiveAttempt): string | undefined {
+  if (!(attempt.outcome instanceof AttemptFailed)) return undefined;
+  const line = attempt.outcome.evidence.split("\n").find((text) => text.trim() !== "") ?? "";
+  return line.length > 200 ? `${line.slice(0, 200)}…` : line;
+}
+
 /** Per-test costs of a live test file, printed once at the end (`--silent=false` shows it). */
 export function createCostLog(): { track: (test: string, attempt: LiveAttempt) => void; print: () => void } {
   const costs: { test: string; usd: number; outcome: string }[] = [];
   return {
-    track: (test, attempt) => costs.push({ test, usd: attempt.costUsd, outcome: outcomeOf(attempt) }),
+    track: (test, attempt) => {
+      const why = failureLine(attempt);
+      costs.push({ test, usd: attempt.costUsd, outcome: why === undefined ? outcomeOf(attempt) : `${outcomeOf(attempt)}: ${why}` });
+    },
     print: () => {
       const total = costs.reduce((sum, cost) => sum + cost.usd, 0);
       const lines = costs.map((cost) => `  ${cost.test}: $${cost.usd.toFixed(4)} (${cost.outcome})`);

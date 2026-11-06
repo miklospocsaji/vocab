@@ -1,6 +1,7 @@
 /**
  * The role boundaries inside the factory-worker image (add-factory-worker task 1.16). Builds
- * the image, adds Vitest on top (live-check.Dockerfile), and runs the boundary tests in a
+ * the image and its `boundary-check` target (the worker plus Vitest, the same image the cloud
+ * test runs on Fargate), and runs the boundary tests in a
  * container started with no added capabilities and Docker's default seccomp profile, in
  * subscription mode. The OAuth token reaches the container through the environment only.
  * Needs Docker; costs well under $0.10 in all.
@@ -13,7 +14,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 const REPO_ROOT = resolve(import.meta.dirname, "../../..");
 const TAG = randomBytes(4).toString("hex");
 const WORKER_IMAGE = `factory-worker:live-${TAG}`;
-const CHECK_IMAGE = `factory-worker-live-check:${TAG}`;
+const CHECK_IMAGE = `factory-worker-boundary-check:${TAG}`;
 const TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN";
 
 function docker(...args: string[]): void {
@@ -25,7 +26,7 @@ interface Run {
   output: string;
 }
 
-/** Runs a command in the live-check image: no added capabilities, the token by name only. */
+/** Runs a command in the boundary-check image: no added capabilities, the token by name only. */
 function inContainer(...command: string[]): Run {
   const run = spawnSync("docker", ["run", "--rm", "--env", TOKEN_VAR, CHECK_IMAGE, ...command], {
     encoding: "utf8",
@@ -54,7 +55,7 @@ function expectPassed(run: Run, n: number): void {
 beforeAll(() => {
   expect(process.env[TOKEN_VAR], `${TOKEN_VAR} must be set (in .env.local)`).toBeTruthy();
   docker("build", "--platform", "linux/amd64", "--file", "factory/worker/Dockerfile", "--tag", WORKER_IMAGE, ".");
-  docker("build", "--file", "factory/worker/test/live-check.Dockerfile", "--build-arg", `WORKER_IMAGE=${WORKER_IMAGE}`, "--tag", CHECK_IMAGE, ".");
+  docker("build", "--platform", "linux/amd64", "--file", "factory/worker/Dockerfile", "--target", "boundary-check", "--tag", CHECK_IMAGE, ".");
 }, 900_000);
 
 afterAll(() => {
