@@ -248,3 +248,98 @@ describe("GitHubForge.pushBranch", () => {
     }
   });
 });
+
+describe("GitHubForge.clone", () => {
+  interface GitCall {
+    args: string[];
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+  }
+
+  function recordingGit() {
+    const calls: GitCall[] = [];
+    const git: RunGit = (args, options) => {
+      calls.push({ args, ...options });
+      return Promise.resolve();
+    };
+    return { calls, git };
+  }
+
+  beforeEach(() => {
+    vi.stubEnv("GIT_CONFIG_GLOBAL", "/dev/null");
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("clones the repository's plain HTTPS URL without blobs, with the token only in its credential helper", async () => {
+    const { calls, git } = recordingGit();
+    const { forge } = setup({ git });
+
+    await forge.clone("/tmp/task/repo");
+
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    expect(call).toBeDefined();
+    if (call === undefined) return;
+    expect(call.cwd).toBe("/tmp/task");
+    const at = call.args.indexOf("clone");
+    expect(call.args.slice(at)).toEqual(["clone", "--filter=blob:none", `https://github.com/${OWNER}/${REPO}.git`, "/tmp/task/repo"]);
+    for (const arg of call.args) expect(arg).not.toContain(TOKEN);
+    expect(call.env["GIT_TERMINAL_PROMPT"]).toBe("0");
+
+    const config = call.args.slice(0, at);
+    const helpers = config.filter((arg) => arg.startsWith("credential.helper="));
+    expect(helpers[0]).toBe("credential.helper=");
+    expect(helpers).toHaveLength(2);
+    const filled = execFileSync("git", [...config, "credential", "fill"], {
+      env: call.env,
+      input: "protocol=https\nhost=github.com\n\n",
+      encoding: "utf8",
+    });
+    expect(filled).toContain(`password=${TOKEN}\n`);
+  });
+
+  it("rejects a failed clone with a failed ForgeError that does not contain the token", async () => {
+    const git: RunGit = () => Promise.reject(new Error(`fatal: Authentication failed for 'https://x-access-token:${TOKEN}@github.com/'`));
+    const { forge } = setup({ git });
+
+    const error = await forge.clone("/tmp/task/repo").catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ForgeError);
+    expect(error).toMatchObject({ kind: "failed" });
+    expect((error as Error).message).toMatch(/cloning .*failed/);
+    expect(inspect(error, { depth: Infinity, showHidden: true })).not.toContain(TOKEN);
+  });
+
+  it("really clones with the default git runner (from a local file remote), and stores no credential in the clone", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "factory-forge-")));
+    try {
+      const run = (cwd: string, ...args: string[]) =>
+        execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", ...args], { cwd, encoding: "utf8" }).trim();
+      const remote = join(root, "hosts", OWNER, `${REPO}.git`);
+      mkdirSync(remote, { recursive: true });
+      run(remote, "init", "--bare", "-b", DEFAULT_BRANCH);
+      // Partial clones need the server to allow filters.
+      run(remote, "config", "uploadpack.allowFilter", "true");
+      const seed = join(root, "seed");
+      run(root, "clone", remote, seed);
+      writeFileSync(join(seed, "README.md"), "# vocab\n");
+      run(seed, "add", "-A");
+      run(seed, "commit", "-m", "initial");
+      run(seed, "push", "origin", DEFAULT_BRANCH);
+      const { forge } = setup({ gitBaseUrl: `file://${join(root, "hosts")}` });
+      const clone = join(root, "clone");
+
+      await forge.clone(clone);
+
+      expect(run(clone, "rev-parse", "HEAD")).toBe(run(remote, "rev-parse", `refs/heads/${DEFAULT_BRANCH}`));
+      expect(run(clone, "remote", "get-url", "origin")).toBe(`file://${remote}`);
+      expect(run(clone, "config", "--local", "--list")).not.toContain("credential");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

@@ -8,6 +8,7 @@
  * every token the forge has used scrubbed from their messages.
  */
 import { execFile } from "node:child_process";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { Octokit } from "@octokit/rest";
 import { ForgeError, type CreatedBranch, type Forge, type ForgeErrorKind, type Issue, type PushBranchOptions } from "./forge.ts";
@@ -151,23 +152,40 @@ export class GitHubForge implements Forge {
 
   async pushBranch(options: PushBranchOptions): Promise<void> {
     const { worktree, branch } = options;
-    const url = `${this.#gitBaseUrl}/${this.#owner}/${this.#repo}.git`;
-    const args = [
-      // An empty helper clears every inherited one (gh's, the OS keychain's), so only ours answers.
-      "-c",
-      "credential.helper=",
-      "-c",
-      `credential.helper=${CREDENTIAL_HELPER}`,
-      "push",
-      url,
-      `refs/heads/${branch}:refs/heads/${branch}`,
-    ];
-    const env: NodeJS.ProcessEnv = { ...process.env, [TOKEN_VAR]: await this.#currentToken(), GIT_TERMINAL_PROMPT: "0" };
+    const args = [...this.#credentialArgs(), "push", this.#repositoryUrl(), `refs/heads/${branch}:refs/heads/${branch}`];
     try {
-      await this.#git(args, { cwd: worktree, env });
+      await this.#git(args, { cwd: worktree, env: await this.#gitEnv() });
     } catch (error) {
       throw new ForgeError(`pushing branch ${branch} failed: ${this.#scrub(messageOf(error))}`, "failed");
     }
+  }
+
+  /**
+   * A partial clone (`--filter=blob:none`) through the same credential helper as pushes. The
+   * helper is given with `git -c`, so it is not written into the clone's config, and the
+   * clone's `origin` is the plain HTTPS URL.
+   */
+  async clone(directory: string): Promise<void> {
+    const args = [...this.#credentialArgs(), "clone", "--filter=blob:none", this.#repositoryUrl(), directory];
+    try {
+      await this.#git(args, { cwd: dirname(directory), env: await this.#gitEnv() });
+    } catch (error) {
+      throw new ForgeError(`cloning ${this.#owner}/${this.#repo} failed: ${this.#scrub(messageOf(error))}`, "failed");
+    }
+  }
+
+  #repositoryUrl(): string {
+    return `${this.#gitBaseUrl}/${this.#owner}/${this.#repo}.git`;
+  }
+
+  /** An empty helper clears every inherited one (gh's, the OS keychain's), so only ours answers. */
+  #credentialArgs(): string[] {
+    return ["-c", "credential.helper=", "-c", `credential.helper=${CREDENTIAL_HELPER}`];
+  }
+
+  /** The token reaches git only through the environment of the one command, for our helper. */
+  async #gitEnv(): Promise<NodeJS.ProcessEnv> {
+    return { ...process.env, [TOKEN_VAR]: await this.#currentToken(), GIT_TERMINAL_PROMPT: "0" };
   }
 
   async #branchSha(branch: string): Promise<string | undefined> {

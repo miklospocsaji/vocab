@@ -56,7 +56,7 @@ Unit tests run in `pnpm check` and need only the local ledger. Docker tests (`*.
 
 ### Worker entry point
 
-- [ ] 1.12 Failing tests for `runWorker` in `factory/worker/src/worker.ts`, with a `FakeForge`, the scripted fake role runner, a temp bare remote and the real ledger. Scenarios:
+- [x] 1.12 Failing tests for `runWorker` in `factory/worker/src/worker.ts`, with a `FakeForge`, the scripted fake role runner, a temp bare remote and the real ledger. Scenarios:
   - Worker runs Intake for an issue
   - Worker advances a proposal
   - Repeated worker task does nothing
@@ -64,13 +64,13 @@ Unit tests run in `pnpm check` and need only the local ledger. Docker tests (`*.
   - Worker reports a rejected issue
   - Unknown state is refused
   - Commits are authored by the factory's bot
-- [ ] 1.13 Write `factory/worker/src/worker.ts` (migrate, clone with the credential helper for `proposal`, worktree under a temp home, call the handler, map the outcome to an exit code) and `factory/worker/src/main.ts` (configuration from the environment, real dependencies, nothing logged that contains a secret).
+- [x] 1.13 Write `factory/worker/src/worker.ts` (migrate, clone with the credential helper for `proposal`, worktree under a temp home, call the handler, map the outcome to an exit code) and `factory/worker/src/main.ts` (configuration from the environment, real dependencies, nothing logged that contains a secret).
 
 ### Image
 
-- [ ] 1.14 Failing docker tests in `factory/worker/test/image.docker.test.ts`. Scenario: Worker image holds no secrets. They build the image from a temp copy of the repo with a dummy `.env.local` and `docs/vocab.db` added, then inspect the image. Also check that `factory-worker design --issue 1` in the container exits 2 with no network access (`--network none`).
-- [ ] 1.15 Write `factory/worker/Dockerfile` and `factory/worker/Dockerfile.dockerignore` following ADR 0010.
-- [ ] 1.16 Live check in the container, with `docker run` and no added capabilities, in subscription mode, with a budget under $0.10. Scenarios:
+- [x] 1.14 Failing docker tests in `factory/worker/test/image.docker.test.ts`. Scenario: Worker image holds no secrets. They build the image from a temp copy of the repo with a dummy `.env.local` and `docs/vocab.db` added, then inspect the image. Also check that `factory-worker design --issue 1` in the container exits 2 with no network access (`--network none`).
+- [x] 1.15 Write `factory/worker/Dockerfile` and `factory/worker/Dockerfile.dockerignore` following ADR 0010.
+- [x] 1.16 Live check in the container, with `docker run` and no added capabilities, in subscription mode, with a budget under $0.10. Scenarios:
   - Boundaries hold in the worker container
   - Missing sandbox blocks Bash (a throwaway probe role with Bash, inside the image)
 

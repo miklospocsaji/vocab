@@ -9,7 +9,7 @@ export default defineConfig({
         test: {
           name: "unit",
           include: [`${packages}/test/**/*.test.ts`],
-          exclude: ["**/node_modules/**", "**/*.live.test.ts", "**/*.docker.test.ts"],
+          exclude: ["**/node_modules/**", "**/*.live.test.ts", "**/*.docker.test.ts", "**/*.container.test.ts"],
         },
       },
       {
@@ -28,6 +28,15 @@ export default defineConfig({
           include: [`${packages}/test/**/*.docker.test.ts`],
           testTimeout: 600_000,
           hookTimeout: 600_000,
+        },
+      },
+      {
+        // Checks that hold only inside the factory-worker image, with real Agent SDK sessions.
+        // Run by factory/worker/test/container.live.test.ts in a container, never on the host.
+        test: {
+          name: "container",
+          include: [`${packages}/test/**/*.container.test.ts`],
+          testTimeout: 300_000,
         },
       },
     ],

@@ -16,7 +16,9 @@
   - `src/github-app.ts`: `createInstallationTokenProvider({ appId, installationId, privateKey, repository, fetch })`. It signs an RS256 JWT with `node:crypto` (`iat` 60 s in the past, `exp` 9 minutes ahead), calls `POST /app/installations/{id}/access_tokens` with `repositories` and `permissions`, and caches the token until five minutes before `expires_at`.
   - `GitHubForge` takes `token: string | (() => Promise<string>)`. The local CLI keeps passing the `gh auth token` string. The credential helper reads the token from the environment of each `git push`, as in M1.
   - `GitHubForge` gets an optional `committer` (`name`, `email`), which `commitChange` uses through `-c user.name`/`-c user.email`. For the App it is `<slug>[bot]` and `<bot-user-id>+<slug>[bot]@users.noreply.github.com`. The bot user id comes from `GET /users/<slug>[bot]` once at start-up.
-- `factory/orchestrator`: no handler changes. `proposal` already returns `advance` at once for a work item past its state, which makes "Repeated worker task does nothing" hold. For `proposal`, the worker passes a fresh clone as `repo` and a temp `home`, so the worktree lives in the task's ephemeral storage. `intake` needs no clone.
+- `factory/worker/src/config.ts`: the command line (`parseWorkerArgs`) and the configuration from the environment (`workerConfig`): `FACTORY_DATABASE_URL`, `FACTORY_GITHUB_REPOSITORY`, `FACTORY_GITHUB_APP_ID`, `FACTORY_GITHUB_APP_INSTALLATION_ID`, `FACTORY_GITHUB_APP_SLUG` and `FACTORY_GITHUB_APP_PRIVATE_KEY` (a PEM; `\n` escapes are accepted). Errors name the variable, never its value. `main.ts` checks the command line before anything else, so invalid input exits 2 with no configuration or network, and removes the private key and the database URL from `process.env` once read.
+- The `Forge` gains `clone(directory)`. `GitHubForge` clones with `--filter=blob:none` through the push credential helper, given with `git -c`, so nothing is written into the clone's config. `FakeForge` clones its `remote`. `appCommitter({ slug, token })` in `github-app.ts` looks up the bot user and returns its git identity.
+- `factory/orchestrator`: no handler logic changes. `ProposalContext` gains an optional `committer`, passed to `commitChange`. `proposal` already returns `advance` at once for a work item past its state, which makes "Repeated worker task does nothing" hold. For `proposal`, the worker passes a fresh clone as `repo` and a temp `home`, so the worktree lives in the task's ephemeral storage. `intake` needs no clone.
 
 ## Worker contract
 
@@ -36,10 +38,11 @@
 
 ## Image (ADR 0010)
 
-- Base `node:24-bookworm-slim`, pinned by digest. Adds `git` and `ca-certificates` from Debian, and the RDS CA bundle for TLS to Aurora. No `bubblewrap` or `socat`: no role in the image uses Bash yet.
+- Base `node:24-bookworm-slim`, pinned by digest. Adds `git`, `ca-certificates`, `bubblewrap` and `socat` from Debian, and the RDS CA bundle for TLS to Aurora (pinned by checksum). `bubblewrap` and `socat` are needed although no role in the image uses Bash: without them the SDK refuses to start any session (see the task 1.16 results).
 - Platform `linux/amd64`. The laptop is x86_64, so the image is built natively, and the spike runs on the same platform as Fargate. arm64 would save about 20% on Fargate minutes, which is cents a month at this volume.
 - The factory runs `.ts` files directly with Node's type stripping, which refuses files under `node_modules`. So the image holds the workspace layout (root manifests, `factory/*`, `.claude/agents`, `openspec/config.yaml`) and runs `pnpm install --frozen-lockfile --prod` for the worker's dependency closure plus the pinned OpenSpec CLI. `pnpm deploy` is not used, because it would copy the workspace packages into `node_modules`.
-- The ignore file is an allowlist: everything is excluded except the paths above. `.env*`, `docs/`, `app/fixtures/`, `.git` and `node_modules` never enter the build context.
+- The ignore file is an allowlist: everything is excluded except the paths above, plus `tsconfig.base.json` (which every `factory/*/tsconfig.json` extends) and the two Vitest configs, so the live check can run the tests inside the image. `.env*`, `docs/`, `app/`, `.git` and `node_modules` never enter the build context.
+- The OpenSpec CLI moves from the root's `devDependencies` to its `dependencies` (same pinned version), because the factory runs it at run time and `--prod` would leave it out.
 - A non-root user `factory` (uid 10001). `HOME` and the work directory are in the task's ephemeral storage.
 - Role configs and prompts are read from the image, not the clone, as in M1 (`loadRole` defaults to the factory's own root). The image's commit is the factory's version.
 
@@ -94,6 +97,21 @@ Base image `node:24-bookworm-slim`, digest `sha256:c86ecead9e55a5210ac1727de38a4
 
 - **The Read tool refuses `/proc` paths itself, before the read guard runs.** A direct `Read` of `/proc/self/environ` returns the tool's own error ("names a device or process file that this tool does not read"). The SDK checks the tool's input before `PreToolUse` hooks, so the guard never sees that call. The live test accepts either refusal. A worktree symlink to `/proc/self/environ` passes the tool's own check, and the read guard denies it, so the guard does matter against a real session. The tool's check is SDK behaviour, not ours, and an upgrade could change it.
 - **The proposal author needed one attempt without Bash**, at $0.27, against M1's $0.37 with Bash. One run is not a rate; the exit run of `add-cloud-proposal-run` records attempts again.
+
+### Container results (task 1.16, 2026-11-06, SDK 0.3.310, subscription mode, `docker run` with no added capabilities and the default seccomp profile)
+
+| Test | Model | Result | Cost |
+| --- | --- | --- | --- |
+| Write outside the allowed paths is denied | Haiku | passes | $0.0011 |
+| WebFetch outside GitHub is denied | Haiku | passes | $0.0020 |
+| Reading a process environment is denied | Haiku | passes | $0.0012 |
+| Proposal author cannot run commands | none (config check) | passes | $0 |
+| Missing sandbox blocks Bash | Haiku | an allowlisted `touch` inside the writable paths fails with the sandbox's error, and the file does not exist | $0.0016 |
+| Grep without a system ripgrep | Haiku | the Grep tool finds the file (the SDK's bundled ripgrep); `rg` is not on `PATH` | $0.0010 |
+
+- **Without `bubblewrap` and `socat`, no session starts.** The first run, on the image as ADR 0010 first described it, failed every session before the first model call ($0): "Sandbox required but unavailable: sandbox is enabled but dependencies are missing: bubblewrap (bwrap) not installed, socat not installed". The runner sets the sandbox with `failIfUnavailable: true` for every role, including the proposal author, which has no Bash. The spike had `bubblewrap` installed, so it only saw Bash commands fail. With the binaries missing, the SDK refuses the whole session instead. The owner chose to install them in the image (2026-11-06). Sessions then start, and Bash fails per command, as in the spike.
+- The live check runs from `factory/worker/test/container.live.test.ts` (`pnpm test:live factory/worker/test/container.live.test.ts`). It builds the image, adds Vitest in a test-only layer (`factory/worker/test/live-check.Dockerfile`), and runs the tests in the container. The checks that hold only in the image are in the `container` Vitest project (`*.container.test.ts`), which never runs in `pnpm check`, `test:live` or `test:docker`. About $0.008 in all, including one debugging probe.
+- The image is 991 MB.
 
 ## Contracts
 

@@ -7,6 +7,7 @@ import { generateKeyPairSync, verify } from "node:crypto";
 import { inspect } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  appCommitter,
   createInstallationTokenProvider,
   ForgeError,
   GitHubForge,
@@ -296,5 +297,46 @@ describe("GitHubForge with a token provider", () => {
     for (const line of logged) expectNoSecrets(line, secrets);
     expectNoSecrets(inspect(forge, { depth: Infinity, showHidden: true }), secrets);
     expectNoSecrets(JSON.stringify(forge), secrets);
+  });
+});
+
+describe("appCommitter", () => {
+  const SLUG = "vocab-factory";
+  const BOT_ID = 41898282;
+  const APP_TOKEN = "ghs_installationTokenForTests0123456789";
+
+  function usersApi(response: () => Response) {
+    const requests: { url: string; authorization: string | null }[] = [];
+    const fetchFn: typeof fetch = (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      requests.push({ url, authorization: new Headers(init?.headers).get("authorization") });
+      return Promise.resolve(response());
+    };
+    return { requests, fetch: fetchFn };
+  }
+
+  it("is the App's bot user, with GitHub's noreply address for its user id", async () => {
+    const api = usersApi(() => Response.json({ login: `${SLUG}[bot]`, id: BOT_ID, type: "Bot" }));
+
+    const committer = await appCommitter({ slug: SLUG, token: () => Promise.resolve(APP_TOKEN), fetch: api.fetch });
+
+    expect(committer).toEqual({ name: `${SLUG}[bot]`, email: `${String(BOT_ID)}+${SLUG}[bot]@users.noreply.github.com` });
+    expect(api.requests).toEqual([{ url: `https://api.github.com/users/${encodeURIComponent(`${SLUG}[bot]`)}`, authorization: `token ${APP_TOKEN}` }]);
+  });
+
+  it("fails with a ForgeError that does not contain the token", async () => {
+    const api = usersApi(() => unauthorized());
+
+    const error = await appCommitter({ slug: SLUG, token: () => Promise.resolve(APP_TOKEN), fetch: api.fetch }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(ForgeError);
+    expect(error).toMatchObject({ kind: "unauthorized", status: 401 });
+    expect(inspect(error, { depth: Infinity, showHidden: true })).not.toContain(APP_TOKEN);
+  });
+
+  it("fails when the user is not the App's bot", async () => {
+    const api = usersApi(() => Response.json({ login: "someone", id: 1, type: "User" }));
+
+    await expect(appCommitter({ slug: SLUG, fetch: api.fetch })).rejects.toBeInstanceOf(ForgeError);
   });
 });

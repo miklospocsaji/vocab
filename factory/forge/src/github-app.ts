@@ -128,3 +128,44 @@ function scrub(text: string, secrets: string[]): string {
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
+
+export interface AppCommitterOptions {
+  /** The App's slug, such as `vocab-factory`. */
+  slug: string;
+  /** Authenticates the lookup; an installation token provider in the worker. */
+  token?: TokenProvider;
+  fetch?: typeof fetch;
+  baseUrl?: string;
+}
+
+/**
+ * The App's bot user as a git identity: `<slug>[bot]` with GitHub's noreply address for the
+ * bot's user id, so GitHub attributes the commits to the App. Looked up once at start-up.
+ */
+export async function appCommitter(options: AppCommitterOptions): Promise<{ name: string; email: string }> {
+  const login = `${options.slug}[bot]`;
+  const what = `GitHub App: looking up the bot user ${login} failed`;
+  const url = `${(options.baseUrl ?? "https://api.github.com").replace(/\/+$/, "")}/users/${encodeURIComponent(login)}`;
+  const token = options.token === undefined ? undefined : await options.token();
+  const headers: Record<string, string> = { accept: "application/vnd.github+json", "x-github-api-version": "2022-11-28" };
+  if (token !== undefined) headers["authorization"] = `token ${token}`;
+  const secrets = token === undefined ? [] : [token];
+
+  let response: Response;
+  try {
+    response = await (options.fetch ?? fetch)(url, { headers });
+  } catch (error) {
+    throw new ForgeError(`${what}: ${scrub(messageOf(error), secrets)}`, "failed");
+  }
+  const body = await readJson(response);
+  if (!response.ok) {
+    const kind: ForgeErrorKind = response.status === 401 ? "unauthorized" : response.status === 404 ? "not-found" : "failed";
+    const detail = typeof body?.["message"] === "string" ? ` ${body["message"]}` : "";
+    throw new ForgeError(`${what}: ${String(response.status)}${scrub(detail, secrets)}`, kind, response.status);
+  }
+  const id = body?.["id"];
+  if (body?.["login"] !== login || typeof id !== "number" || !Number.isSafeInteger(id)) {
+    throw new ForgeError(`${what}: the response is not that bot user`, "failed", response.status);
+  }
+  return { name: login, email: `${String(id)}+${login}@users.noreply.github.com` };
+}

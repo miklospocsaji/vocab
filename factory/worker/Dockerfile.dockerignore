@@ -1,0 +1,18 @@
+# An allowlist (ADR 0010): everything is excluded except what the worker runs. .env*, docs/,
+# app/, .git and node_modules never enter the build context.
+*
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!tsconfig.base.json
+!factory/
+!.claude/agents/
+!openspec/config.yaml
+# The test configs, for running the live boundary tests inside the image (task 1.16).
+!vitest.config.ts
+!vitest.live-setup.ts
+**/node_modules
+**/.env*
+**/*.tsbuildinfo
+**/coverage
+**/dist
