@@ -37,7 +37,7 @@ Unit tests run in `pnpm check` and need only the local ledger. Docker tests (`*.
 
   Also cover: Grep and Glob with and without `path`, Glob patterns that leave the worktree, and the config allowing `WebFetch` only with the two GitHub domain rules. This replaces the Bash expectations in `factory/roles/test/proposal-author.test.ts`.
 - [x] 1.8 Write `createReadGuard` and wire it into the runner. Update `proposal-author.yaml` and `.claude/agents/proposal-author.md`: no Bash, GitHub-only `WebFetch`, `maxBudgetUsd: 1.5`, and the OpenSpec structure stated in the prompt instead of the steps that ran `openspec`.
-- [ ] 1.9 Live tests, in subscription mode. Scenarios:
+- [x] 1.9 Live tests, in subscription mode. Scenarios:
   - WebFetch outside GitHub is denied (budget under $0.10)
   - Reading a process environment is denied, against a real session (budget under $0.10)
   - Proposal author produces a valid change without Bash (the existing proposal-author live test, budget $1.50 per attempt; record the number of attempts)

@@ -80,6 +80,21 @@ Base image `node:24-bookworm-slim`, digest `sha256:c86ecead9e55a5210ac1727de38a4
 - **The working combination has a cost.** `enableWeakerNestedSandbox` leaves the host's `/proc` readable by sandboxed commands, and it needs a host that allows unconfined containers.
 - **It fails closed, but not the way ADR 0007 says.** With `failIfUnavailable: true`, every Bash command fails with exit code 1, so nothing runs unconfined. The session itself carries on and ends with result `success`. ADR 0007 says the attempt fails; it does not. A role without working Bash can therefore still succeed, and the runner's own validation still applies.
 
+### Live results (task 1.9, 2026-11-05, SDK 0.3.310, subscription mode, on the laptop)
+
+| Test | Model | Result | Cost |
+| --- | --- | --- | --- |
+| WebFetch outside GitHub is denied | Haiku | `example.com` denied by `dontAsk` and listed in `permission_denials`; `github.com` fetched | $0.0015 |
+| Reading a process environment is denied | Haiku | `/proc/self/environ` and the parent's `/proc/<pid>/environ` refused; no environment content in any tool result | $0.0007 |
+| Read through a worktree symlink to `/proc/self/environ` | Haiku | denied by the read guard | $0.0006 |
+| `Glob` with the pattern `/proc/*/environ` | Haiku | denied by the read guard ("can leave the worktree") | $0.0005 |
+| Non-allowlisted command is denied | Haiku | passes | $0.0017 |
+| Bash cannot write outside the role's paths | Haiku | passes | $0.0011 |
+| Proposal author produces a valid change without Bash | Opus | valid on the first of three attempts (`x-complexity: large`) | $0.2656 |
+
+- **The Read tool refuses `/proc` paths itself, before the read guard runs.** A direct `Read` of `/proc/self/environ` returns the tool's own error ("names a device or process file that this tool does not read"). The SDK checks the tool's input before `PreToolUse` hooks, so the guard never sees that call. The live test accepts either refusal. A worktree symlink to `/proc/self/environ` passes the tool's own check, and the read guard denies it, so the guard does matter against a real session. The tool's check is SDK behaviour, not ours, and an upgrade could change it.
+- **The proposal author needed one attempt without Bash**, at $0.27, against M1's $0.37 with Bash. One run is not a rate; the exit run of `add-cloud-proposal-run` records attempts again.
+
 ## Contracts
 
 No changes in `app/contracts/`.

@@ -10,7 +10,7 @@ import { query as sdkQuery, type Options, type SDKMessage, type SDKResultMessage
 import { expect } from "vitest";
 import { stringify } from "yaml";
 import { loadRole, type Role, type RoleConfig } from "../src/config.ts";
-import type { PromptIssue } from "../src/prompt.ts";
+import type { PromptArtifact, PromptIssue, RetryEvidence } from "../src/prompt.ts";
 import { AttemptFailed, createRunner, type QueryFn, type Recorder } from "../src/runner.ts";
 
 export const LIVE_MODEL = "claude-haiku-5-5";
@@ -128,6 +128,10 @@ export interface ProbeOptions {
   env?: Record<string, string | undefined>;
   /** Changes the options the runner built before the real `query` sees them (control runs only). */
   alterOptions?: (options: Options) => Options;
+  /** The files already in the change folder, as the Proposal handler passes them on a retry; defaults to none. */
+  changeFiles?: PromptArtifact[];
+  /** The previous attempt's failure, as the Proposal handler passes it on a retry. */
+  evidence?: RetryEvidence;
 }
 
 /** One real runner attempt for the probe role; every message the recorder saw is kept. */
@@ -148,14 +152,18 @@ export async function runProbe(role: Role, worktree: string, probe: ProbeOptions
   const runRole = createRunner({ recorder, query, ...(probe.env === undefined ? {} : { env: probe.env }) });
   let outcome: unknown;
   try {
-    outcome = await runRole(role, {
-      id: `live-${role.name}`,
-      changeId: probe.changeId ?? CHANGE_ID,
-      worktree,
-      issue: probe.issue ?? { title: "Boundary probe", body: "Follow your role instructions." },
-      changeFiles: [],
-      specs: [],
-    });
+    outcome = await runRole(
+      role,
+      {
+        id: `live-${role.name}`,
+        changeId: probe.changeId ?? CHANGE_ID,
+        worktree,
+        issue: probe.issue ?? { title: "Boundary probe", body: "Follow your role instructions." },
+        changeFiles: probe.changeFiles ?? [],
+        specs: [],
+      },
+      probe.evidence,
+    );
   } catch (error) {
     if (!(error instanceof AttemptFailed)) throw error;
     outcome = error;
@@ -213,6 +221,13 @@ export function writeAttempts(messages: SDKMessage[], worktree: string, path: st
     if (typeof target !== "string") return false;
     return resolve(worktree, target) === wanted;
   });
+}
+
+/** The text of every tool result the session returned to the model, joined. */
+export function toolResultsText(messages: SDKMessage[]): string {
+  return toolCalls(messages)
+    .map((call) => toolOutcome(messages, call.id)?.text ?? "")
+    .join("\n");
 }
 
 /** The failure reason of an attempt, or "succeeded". */
