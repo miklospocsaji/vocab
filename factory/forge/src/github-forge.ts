@@ -1,14 +1,17 @@
 /**
- * The Forge on GitHub, through `@octokit/rest`. M1 authenticates with the owner's token
- * from `gh auth token`; M2 swaps in GitHub App installation tokens.
+ * The Forge on GitHub, through `@octokit/rest`. Locally it authenticates with the owner's
+ * token from `gh auth token`; the worker passes a GitHub App token provider (ADR 0009), which
+ * is asked for a token before every request and push, so an expiring token is refreshed first.
  *
- * The token is held in private fields only, so it never shows up in `inspect` or JSON of
- * the forge, and errors are rebuilt as ForgeErrors without the request (and its headers).
+ * Tokens are held in private fields only, so they never show up in `inspect` or JSON of the
+ * forge, and errors are rebuilt as ForgeErrors without the request (and its headers), with
+ * every token the forge has used scrubbed from their messages.
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { Octokit } from "@octokit/rest";
 import { ForgeError, type CreatedBranch, type Forge, type ForgeErrorKind, type Issue, type PushBranchOptions } from "./forge.ts";
+import type { TokenProvider } from "./github-app.ts";
 
 /** Runs git; GitHubForge uses it only to push. */
 export type RunGit = (args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => Promise<void>;
@@ -20,11 +23,17 @@ export interface GitHubForgeLogger {
   error(message: string): void;
 }
 
+/** Who commits the factory's changes; for the App, its bot user. */
+export interface GitHubCommitter {
+  name: string;
+  email: string;
+}
+
 export interface GitHubForgeOptions {
   owner: string;
   repo: string;
-  /** From `gh auth token` locally (see `ghAuthToken`); never logged. */
-  token: string;
+  /** From `gh auth token` locally (see `ghAuthToken`), or a GitHub App token provider; never logged. */
+  token: string | TokenProvider;
   /** Defaults to the global `fetch`; tests inject one so nothing reaches the network. */
   fetch?: typeof fetch;
   /** The REST API root; defaults to `https://api.github.com`. */
@@ -35,6 +44,8 @@ export interface GitHubForgeOptions {
   git?: RunGit;
   /** Receives Octokit's log lines; defaults to discarding them. */
   log?: GitHubForgeLogger;
+  /** The identity the factory's commits should carry; exposed as `committer` for the commit step. */
+  committer?: GitHubCommitter;
 }
 
 /** The environment variable that carries the token to the credential helper, and only to it. */
@@ -55,9 +66,13 @@ const defaultGit: RunGit = async (args, { cwd, env }) => {
 };
 
 export class GitHubForge implements Forge {
+  /** The identity for commits pushed through this forge, if one was configured. */
+  readonly committer: GitHubCommitter | undefined;
   readonly #owner: string;
   readonly #repo: string;
-  readonly #token: string;
+  readonly #token: TokenProvider;
+  /** Every token handed out so far, so errors can be scrubbed of any of them. */
+  readonly #seen = new Set<string>();
   readonly #gitBaseUrl: string;
   readonly #git: RunGit;
   readonly #octokit: Octokit;
@@ -65,14 +80,20 @@ export class GitHubForge implements Forge {
   constructor(options: GitHubForgeOptions) {
     this.#owner = options.owner;
     this.#repo = options.repo;
-    this.#token = options.token;
+    const { token } = options;
+    this.#token = typeof token === "string" ? () => Promise.resolve(token) : token;
+    if (typeof token === "string") this.#seen.add(token);
+    this.committer = options.committer;
     this.#gitBaseUrl = (options.gitBaseUrl ?? "https://github.com").replace(/\/+$/, "");
     this.#git = options.git ?? defaultGit;
     this.#octokit = new Octokit({
-      auth: options.token,
       log: options.log ?? silent,
       ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
       ...(options.fetch === undefined ? {} : { request: { fetch: options.fetch } }),
+    });
+    // A fresh token for every request: the provider caches it and refreshes it before expiry.
+    this.#octokit.hook.before("request", async (request) => {
+      request.headers.authorization = `token ${await this.#currentToken()}`;
     });
   }
 
@@ -141,7 +162,7 @@ export class GitHubForge implements Forge {
       url,
       `refs/heads/${branch}:refs/heads/${branch}`,
     ];
-    const env: NodeJS.ProcessEnv = { ...process.env, [TOKEN_VAR]: this.#token, GIT_TERMINAL_PROMPT: "0" };
+    const env: NodeJS.ProcessEnv = { ...process.env, [TOKEN_VAR]: await this.#currentToken(), GIT_TERMINAL_PROMPT: "0" };
     try {
       await this.#git(args, { cwd: worktree, env });
     } catch (error) {
@@ -172,8 +193,16 @@ export class GitHubForge implements Forge {
     }
   }
 
+  async #currentToken(): Promise<string> {
+    const token = await this.#token();
+    if (token !== "") this.#seen.add(token);
+    return token;
+  }
+
   #scrub(text: string): string {
-    return this.#token === "" ? text : text.replaceAll(this.#token, "[REDACTED]");
+    let result = text;
+    for (const token of this.#seen) result = result.replaceAll(token, "[REDACTED]");
+    return result;
   }
 }
 

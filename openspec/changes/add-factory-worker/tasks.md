@@ -46,13 +46,13 @@ Unit tests run in `pnpm check` and need only the local ledger. Docker tests (`*.
 
 ### GitHub App Forge
 
-- [ ] 1.10 Failing tests for `createInstallationTokenProvider` and `GitHubForge` with a token provider, using the injected `fetch` and a test RSA key generated in the test. Scenarios:
+- [x] 1.10 Failing tests for `createInstallationTokenProvider` and `GitHubForge` with a token provider, using the injected `fetch` and a test RSA key generated in the test. Scenarios:
   - Installation token is scoped to the repository (the JWT verifies against the public key, with `iss` set to the App id and an expiry of at most 10 minutes)
   - Expiring token is refreshed
   - Token failures do not leak the token
 
   Also run the existing Forge contract tests against a `GitHubForge` built with a token provider.
-- [ ] 1.11 Write `factory/forge/src/github-app.ts` and make `GitHubForge` accept `token: string | (() => Promise<string>)` and an optional `committer`. The local CLI is unchanged.
+- [x] 1.11 Write `factory/forge/src/github-app.ts` and make `GitHubForge` accept `token: string | (() => Promise<string>)` and an optional `committer`. The local CLI is unchanged.
 
 ### Worker entry point
 

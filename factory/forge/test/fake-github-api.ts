@@ -1,7 +1,10 @@
 /**
  * An in-memory GitHub REST API for the few endpoints GitHubForge calls, served through an
- * injected `fetch`, so GitHubForge tests never touch the network.
+ * injected `fetch`, so GitHubForge tests never touch the network. With `app` set it also
+ * plays the factory's GitHub App: it issues installation tokens for a JWT signed with the
+ * App's key, and accepts those tokens until they expire.
  */
+import { createPublicKey, verify, type KeyObject } from "node:crypto";
 
 export interface ApiIssue {
   number: number;
@@ -20,12 +23,31 @@ export interface RecordedRequest {
   body: unknown;
 }
 
+export interface FakeGitHubApp {
+  appId: number;
+  installationId: number;
+  /** The App's public key; the token endpoint verifies the JWT against it. */
+  publicKey: KeyObject | string;
+  /** How long an issued token lasts; GitHub's is an hour. */
+  tokenLifetimeMs?: number;
+}
+
 export interface FakeGitHubApiOptions {
   owner: string;
   repo: string;
-  token: string;
+  /** A fixed token the repository endpoints accept, like the owner's `gh` token. */
+  token?: string;
   defaultBranch: string;
   defaultSha: string;
+  app?: FakeGitHubApp;
+}
+
+export interface IssuedToken {
+  token: string;
+  /** Milliseconds since the epoch. */
+  expiresAt: number;
+  /** The JSON body of the token request. */
+  request: unknown;
 }
 
 /** Return a Response to answer a request before the emulator does, or undefined to pass. */
@@ -42,6 +64,8 @@ export class FakeGitHubApi {
   readonly comments = new Map<number, string[]>();
   /** Branch name to head sha. */
   readonly branches = new Map<string, string>();
+  /** The installation tokens issued so far, in order. */
+  readonly issuedTokens: IssuedToken[] = [];
   intercept: Intercept | undefined;
 
   readonly #options: FakeGitHubApiOptions;
@@ -69,11 +93,19 @@ export class FakeGitHubApi {
   };
 
   #handle(request: RecordedRequest): Response {
-    const { owner, repo, token, defaultBranch } = this.#options;
+    const { owner, repo, defaultBranch, app } = this.#options;
     const [scheme, credential] = (request.authorization ?? "").split(" ");
-    if (!/^(token|bearer)$/i.test(scheme ?? "") || credential !== token) {
-      return json(401, { message: "Bad credentials", documentation_url: "https://docs.github.com/rest", status: "401" });
+    const badCredentials = () => json(401, { message: "Bad credentials", documentation_url: "https://docs.github.com/rest", status: "401" });
+
+    if (app !== undefined && request.path === `/app/installations/${String(app.installationId)}/access_tokens`) {
+      if (request.method !== "POST" || !/^bearer$/i.test(scheme ?? "") || !validAppJwt(credential ?? "", app)) return badCredentials();
+      const expiresAt = Date.now() + (app.tokenLifetimeMs ?? 3_600_000);
+      const token = `ghs_fakeInstallationToken${String(this.issuedTokens.length + 1).padStart(4, "0")}abcdefXYZ`;
+      this.issuedTokens.push({ token, expiresAt, request: request.body });
+      return json(201, { token, expires_at: new Date(expiresAt).toISOString() });
     }
+
+    if (!/^(token|bearer)$/i.test(scheme ?? "") || credential === undefined || !this.#accepts(credential)) return badCredentials();
 
     const prefix = `/repos/${owner}/${repo}`;
     if (!request.path.startsWith(prefix)) return notFound();
@@ -130,4 +162,20 @@ export class FakeGitHubApi {
 
     return notFound();
   }
+
+  /** The fixed token, or an installation token that has not expired. */
+  #accepts(credential: string): boolean {
+    if (this.#options.token !== undefined && credential === this.#options.token) return true;
+    return this.issuedTokens.some((issued) => issued.token === credential && Date.now() < issued.expiresAt);
+  }
+}
+
+/** An RS256 JWT signed with the App's key, issued by the App, and not expired. */
+function validAppJwt(jwt: string, app: FakeGitHubApp): boolean {
+  const [header, payload, signature] = jwt.split(".");
+  if (header === undefined || payload === undefined || signature === undefined) return false;
+  const key = typeof app.publicKey === "string" ? createPublicKey(app.publicKey) : app.publicKey;
+  if (!verify("RSA-SHA256", Buffer.from(`${header}.${payload}`), key, Buffer.from(signature, "base64url"))) return false;
+  const claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as { iss?: unknown; exp?: unknown };
+  return String(claims.iss) === String(app.appId) && typeof claims.exp === "number" && claims.exp * 1000 > Date.now();
 }
