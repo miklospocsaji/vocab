@@ -6,10 +6,11 @@ Learners look up some words again and again, but nothing shows them which words 
 
 ## What Changes
 
-- The word list shows one entry per Kindle word entry (`WORDS.id`), with the word as it was looked up and its lookup count.
+- The word list shows one entry per Kindle word entry (`WORDS.id`), with the word as it was looked up (`WORDS.word`, not its stem) and its lookup count.
 - The lookup count is the number of imported lookups of that word entry across all books. Inflected forms are separate word entries and are counted separately.
-- The word list is ordered by lookup count, highest first; ties are ordered alphabetically, ignoring case.
+- The word list is ordered by lookup count, highest first. Ties are ordered alphabetically by the word, ignoring case, in the collation of the word's language (`WORDS.lang`), so a German "Ä" sorts with "A".
 - Re-importing the same file leaves every count unchanged; importing a newer file adds only its new lookups to the counts.
+- This change specifies what the word list holds and how it is ordered, not where it appears: whether it is a domain function, an API or a view is decided in Design. It builds on the `vocab.db` importer, M3's first workload, and lands after it.
 - Out of scope: per-book counts, per-trajectory grouping, known or ignored words, user-selectable sorting or filtering, and any merging of inflected forms by stem.
 
 ## Capabilities
@@ -23,6 +24,6 @@ Learners look up some words again and again, but nothing shows them which words 
 ## Impact
 
 - `app/domain/` import logic: counting lookups per word entry and ordering the word list.
-- The word list view or API that presents imported words gains a lookup count per entry (a new or changed contract under `app/contracts/` if one exists).
+- A new read contract for the word list under `app/contracts/`, which makes this change `medium`. Its surface (domain function, API or view) is decided in Design.
 - Tests run against the committed fixtures `app/fixtures/vocab.db` and `app/fixtures/vocab-older.db`.
 - No new dependencies; no change to factory capabilities.

@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Word entries show their lookup count
-The word list SHALL contain one entry per imported Kindle word entry (`WORDS.id`). Each entry SHALL show the word as it was looked up and its lookup count: the number of imported lookups referencing that word entry, across all books.
+The word list SHALL contain one entry per imported Kindle word entry (`WORDS.id`). Each entry SHALL show the word as it was looked up (`WORDS.word`, not its stem) and its lookup count: the number of imported lookups referencing that word entry, across all books.
 
 #### Scenario: Count sums lookups across books
 - **WHEN** an imported file has three lookups of one word entry, two in one book and one in another
@@ -12,7 +12,7 @@ The word list SHALL contain one entry per imported Kindle word entry (`WORDS.id`
 - **THEN** the word list shows "ran" with a count of 2 and "running" with a count of 1 as separate entries
 
 ### Requirement: Word list is ordered by lookup count
-The word list SHALL be ordered by lookup count, highest first. Entries with the same lookup count SHALL be ordered alphabetically by the word, ignoring case.
+The word list SHALL be ordered by lookup count, highest first. Entries with the same lookup count SHALL be ordered alphabetically by the word, ignoring case, in the collation of the word's language (`WORDS.lang`).
 
 #### Scenario: Most looked-up word comes first
 - **WHEN** the imported words have lookup counts 1, 5 and 3
@@ -21,6 +21,10 @@ The word list SHALL be ordered by lookup count, highest first. Entries with the 
 #### Scenario: Equal counts are ordered alphabetically ignoring case
 - **WHEN** the words "banana", "Apple" and "cherry" each have a lookup count of 2
 - **THEN** the word list shows them in the order "Apple", "banana", "cherry"
+
+#### Scenario: Letters sort by the word's language
+- **WHEN** the German word entries "Birne" and "Äpfel" each have a lookup count of 2
+- **THEN** the word list shows "Äpfel" before "Birne"
 
 ### Requirement: Re-import keeps lookup counts accurate
 Importing a file whose lookups were already imported SHALL NOT change any lookup count. Importing a newer file SHALL increase counts only by the lookups not imported before.
