@@ -152,6 +152,15 @@ The owner then set the App's webhook URL to the Function URL and activated it. T
 - The second `/approve`, at 17:38 UTC on 2026-11-08 on revision 5, closed the approval and resumed the execution ("resumed" at 17:39:23). Approved then failed in 0.1 s with `ECS.AccessDeniedException` on `FactoryWorker01A7C86A:4`. The execution still named revision 4, its start revision, which the deploy of the 180 s fix had made INACTIVE and dropped from the role's policy. Both retries and Escalate failed the same way, and the execution failed at 17:41:23. The work item stays `awaiting-proposal-approval` with its approval closed, so issue #4 cannot finish in M2. A relabel ends at Intake as a duplicate.
 - Fix: states and the webhook name the worker's family (see Decisions). Deployed as revision 6. The exit run continues on a new issue.
 
+**Run 3 (2026-11-08, issue #5): passed.** Revision 6 throughout, no deploy during the run, nothing on the laptop.
+- "Labelling an issue starts an execution": the label at 19:56:34 UTC started `issue-5-8011d200-dbae-11f1-8ec4-15ae77b7973e` at 19:56:35. Intake created work item `add-show-how-often-each-word-was-looked` and its branch.
+- "Execution waits for approval": Intake took 69 s, including Aurora's resume, and Proposal took 84 s. AwaitApproval posted the summary at 19:59:35, 3 min 0 s after the label. At 19:59:56 the execution was paused with no worker task running.
+- "Summary shows the cost": 53,389 tokens, about $0.16 estimated, auth mode `api-key`, ending with the `/approve` instruction.
+- The branch held `5484257` by `vocab-factory[bot]`, valid under `--strict`. The summary listed four open questions. The owner's answers were committed as `2e4e3c6`, still valid under `--strict`.
+- "Execution history holds no artifacts or secrets": the scan ran at 20:03:37 UTC while the execution was paused (23 events). The control, the `FACTORY_TASK_TOKEN` override, was found. The issue body, both versions of `proposal.md` and of the delta spec, the Anthropic API key, the webhook secret, the App private key, the ledger password and the GitHub token prefixes were all clean.
+- "Owner's approval resumes the execution": the owner's `/approve` at 20:08:35 started `approve` at 20:08:38 (webhook log). It closed the approval and resumed the execution at 20:09:20. Approved set `proposal-approved` and posted the confirmation at 20:09:46. The execution succeeded at 20:10:11, 96 s after `/approve`.
+- Cost: $0.16 in model tokens, plus five Fargate tasks of about a minute each (well under a cent).
+
 ## Cost (eu-central-1, monthly, idle; estimates, not checked against the current price list)
 
 | Item | Estimate |

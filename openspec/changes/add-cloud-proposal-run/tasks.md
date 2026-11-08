@@ -103,7 +103,7 @@ Unit tests run in `pnpm check` with fakes for GitHub and AWS and the real local 
 
 ## Step 4: Exit run
 
-- [ ] 4.1 With the laptop's factory processes stopped, the owner labels a test issue `factory`. Confirm:
+- [x] 4.1 With the laptop's factory processes stopped, the owner labels a test issue `factory`. Confirm:
   - Labelling an issue starts an execution
   - Execution waits for approval, within 10 minutes of the label
   - Summary shows the cost
