@@ -74,7 +74,7 @@ A pure function `definition({ cluster, taskDefinition, subnets, securityGroup, c
   - `WorkItemState` gains `proposal-approved`. The local run loop treats it as past `awaiting-proposal-approval`.
   - `renderProposalSummary` takes an optional cost line (tokens, USD estimate, auth mode) and an optional approval instruction. The local CLI keeps its M1 summary.
   - `intake` takes an optional `executionArn`, and returns a `duplicate` transition as described above.
-- `factory/ledger`: migration `0002_cloud.sql` and its queries, plus `connectionFromSecret(json)`, which builds a `pg` config with TLS verified against the RDS CA bundle committed at `factory/ledger/certs/rds-global-bundle.pem` with its SHA-256 recorded. The connection retries for up to 60 s while Aurora resumes.
+- `factory/ledger`: migration `0002_cloud.sql` and its queries, plus `connectionFromSecret(json)`, which builds a `pg` config with TLS verified against the RDS CA bundle committed at `factory/ledger/certs/rds-global-bundle.pem` with its SHA-256 recorded. The connection retries for up to 180 s while Aurora resumes.
 
 ## Data model (migration 0002)
 
@@ -133,6 +133,20 @@ Deployed 2026-11-06 with the `vocab` profile, approved by the owner (93 s). It a
 "Unsigned webhook is rejected" passed against the deployed endpoint (`webhook.cloud.test.ts`). Three deliveries, with no signature, another secret's signature and a malformed one, each got 401, and no execution or worker task started. The Lambda's log shows each rejection. That it answered 401 rather than 500 also shows it read the webhook secret from Parameter Store.
 
 The owner then set the App's webhook URL to the Function URL and activated it. The first full `pnpm test:cloud` failed on a test bug: the webhook test counted every task in the cluster, and the boundary check's task, started by the other cloud test file in parallel, was one. The test now counts only tasks of the worker's family, the only ones the webhook can start. Run 2 (2026-11-06) **passed**: all 3 cloud tests, "Unsigned webhook is rejected" and the two boundary tests of task 2.7, on revision 2 of both task definitions.
+
+## Exit run (task 4.1)
+
+**Run 1 (2026-11-06, issue #4): failed at Intake, fixed.**
+- The first label (21:48 UTC) sent no delivery: the App was not subscribed to the Issues event. The owner subscribed it (an `installation` delivery at 22:14 was the only one, answered 204), then removed and re-added the label.
+- Execution `issue-4-03584d40-da30-11f1-899a-8466560805f6` started at 22:18:38 UTC. Intake's worker exited 2 with `FACTORY_DATABASE_URL is not set`, so Escalate ran at once and failed the same way. The execution failed at 22:20:22. No work item, branch or comment was created, and no tokens were spent.
+- Cause: the stack injects the ledger as `FACTORY_LEDGER_SECRET`, but the worker still read only `FACTORY_DATABASE_URL`. `connectionFromSecret` (task 2.6) was never wired in. The 60 s retry while Aurora resumes was missing too. No test checked the task definition against the worker's configuration, and no earlier cloud test started a worker that touches the ledger.
+- Fix: `workerConfig` builds the ledger from `FACTORY_LEDGER_SECRET` with `connectionFromSecret`, falling back to `FACTORY_DATABASE_URL` locally. `runWorker` calls `waitForLedger` (2 s apart, each connect bounded at 10 s; 60 s at first, 180 s since run 2) before migrating, inside its `try`, so a ledger that never answers still fails a paused AwaitApproval. A stack test now runs `workerConfig` on the task definition's environment and secrets. Deployed as revision 4 of both task definitions (67 s).
+
+**Run 2 (issue #4): paused for approval, then `/approve` failed on Aurora's resume, fixed.**
+- Execution `issue-4-ebaefdd0-da32-11f1-92f9-5bb17e05ec30` started at 22:39:27 UTC on 2026-11-06. Intake took 66 s, including Aurora's 16 s resume. Proposal took 92 s, and AwaitApproval posted the summary at 22:42:29, 3 min 2 s after the label. The cost line read 53,854 tokens, about $0.16, auth mode `api-key`. The branch held commit `a479ba0` by `vocab-factory[bot]`, valid under `--strict`.
+- The summary listed five open questions. The owner answered them on the branch (`e51b847`, still valid under `--strict`) before approving. Gating `/approve` on open questions is left for a change after M2.
+- `/approve` on 2026-11-08 at 14:52:35 UTC started the `approve` task, launched correctly (revision 4, the worker's security group, public IP). It exited 1 with "the ledger did not answer within 60 s (Error)". After about 40 hours paused, Aurora took 76 s to resume (14:52:59 to 14:54:15). The approval stayed open and the execution stayed paused.
+- Fix: `waitForLedger` waits 180 s by default and names a timeout without a code as `connection timeout`. A failed `approve` still leaves no comment on the issue: left for the change after M2.
 
 ## Cost (eu-central-1, monthly, idle; estimates, not checked against the current price list)
 

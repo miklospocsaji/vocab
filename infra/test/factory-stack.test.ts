@@ -10,6 +10,7 @@ import { join, relative } from "node:path";
 import { App } from "aws-cdk-lib";
 import { Match, Template } from "aws-cdk-lib/assertions";
 import { WEBHOOK_ENV } from "@vocab/factory-orchestrator/webhook-env";
+import { workerConfig } from "@vocab/factory-worker/config";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BOUNDARY_CHECK_TARGET, FactoryStack, PARAMETERS, STATE_MACHINE_NAME, WORKER_CONTAINER } from "../factory-stack.ts";
 
@@ -197,6 +198,30 @@ describe("factory stack: worker", () => {
     const roles = [target(taskDefinition["TaskRoleArn"]), target(taskDefinition["ExecutionRoleArn"])].map((role) => role ?? "");
     const worker = JSON.stringify([taskDefinition, ...roles.flatMap((role) => policiesOf(role))]);
     expect(worker).not.toContain(PARAMETERS.githubWebhookSecret.slice(1));
+  });
+
+  it("gives the worker every variable its configuration needs", () => {
+    // Stand-ins for what ECS injects from `secrets` at start; the names come from the template.
+    const injected: Record<string, string> = {
+      ANTHROPIC_API_KEY: "sk-ant-api-stand-in",
+      FACTORY_GITHUB_APP_PRIVATE_KEY: "-----BEGIN RSA PRIVATE KEY-----\nstand-in\n-----END RSA PRIVATE KEY-----\n",
+      FACTORY_LEDGER_SECRET: JSON.stringify({ host: "ledger.example", port: 5432, username: "factory", password: "stand-in", dbname: "factory" }),
+    };
+    const container = workerContainer();
+    const secrets = (container["Secrets"] as { Name: string }[] | undefined) ?? [];
+    const environment = (container["Environment"] as { Name: string; Value: unknown }[] | undefined) ?? [];
+    const env: Record<string, string> = Object.fromEntries(environment.map((variable) => [variable.Name, String(variable.Value)]));
+    for (const { Name } of secrets) {
+      const value = injected[Name];
+      expect(value, `no stand-in for the secret ${Name}`).toBeDefined();
+      env[Name] = value ?? "";
+    }
+
+    // The worker's own parser, so a variable the stack fails to pass fails here, not in Fargate.
+    const config = workerConfig(env);
+
+    expect(config.ledger.ssl).toMatchObject({ rejectUnauthorized: true });
+    expect(config.ledger).not.toHaveProperty("connectionString");
   });
 
   it("runs the worker image on Fargate, 1 vCPU and 2 GB, linux/amd64", () => {

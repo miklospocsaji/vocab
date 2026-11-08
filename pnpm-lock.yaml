@@ -352,6 +352,9 @@ importers:
         specifier: 10.8.1
         version: 10.8.1
     devDependencies:
+      '@vocab/factory-worker':
+        specifier: workspace:*
+        version: link:../factory/worker
       aws-cdk:
         specifier: 2.1147.0
         version: 2.1147.0

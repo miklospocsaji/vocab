@@ -4,7 +4,8 @@
  * a variable and never its value.
  */
 import { parseArgs } from "node:util";
-import { DATABASE_URL_VAR } from "@vocab/factory-ledger";
+import type pg from "pg";
+import { connectionFromSecret, DATABASE_URL_VAR, LEDGER_SECRET_VAR } from "@vocab/factory-ledger";
 import { ESCALATION_REASONS, type EscalationReason } from "@vocab/factory-orchestrator";
 
 /** The states this worker runs: one per state machine state (add-cloud-proposal-run). */
@@ -114,7 +115,12 @@ export const ENV = {
 } as const;
 
 export interface WorkerConfig {
-  databaseUrl: string;
+  /**
+   * The ledger's connection: in the cloud from the RDS secret ECS injects as
+   * FACTORY_LEDGER_SECRET, over TLS verified against the RDS CA; locally and in the Docker
+   * tests from FACTORY_DATABASE_URL. The secret wins when both are set.
+   */
+  ledger: pg.PoolConfig;
   owner: string;
   repo: string;
   app: { appId: number; installationId: number; slug: string; privateKey: string };
@@ -126,7 +132,7 @@ export class WorkerConfigError extends Error {
 }
 
 export function workerConfig(env: Record<string, string | undefined>): WorkerConfig {
-  const databaseUrl = required(env, DATABASE_URL_VAR);
+  const ledger = ledgerConnection(env);
 
   const repository = required(env, ENV.repository);
   const match = /^([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)$/.exec(repository);
@@ -143,11 +149,26 @@ export function workerConfig(env: Record<string, string | undefined>): WorkerCon
   }
 
   return {
-    databaseUrl,
+    ledger,
     owner,
     repo,
     app: { appId: positiveInteger(env, ENV.appId), installationId: positiveInteger(env, ENV.installationId), slug, privateKey },
   };
+}
+
+function ledgerConnection(env: Record<string, string | undefined>): pg.PoolConfig {
+  const secret = env[LEDGER_SECRET_VAR];
+  if (secret !== undefined && secret.trim() !== "") {
+    try {
+      return connectionFromSecret(secret);
+    } catch (error) {
+      // connectionFromSecret names fields only, never their values.
+      throw new WorkerConfigError(`${LEDGER_SECRET_VAR}: ${error instanceof Error ? error.message : "invalid"}`);
+    }
+  }
+  const url = env[DATABASE_URL_VAR];
+  if (url === undefined || url.trim() === "") throw new WorkerConfigError(`neither ${LEDGER_SECRET_VAR} nor ${DATABASE_URL_VAR} is set`);
+  return { connectionString: url };
 }
 
 function required(env: Record<string, string | undefined>, name: string): string {

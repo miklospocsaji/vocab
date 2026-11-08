@@ -58,6 +58,7 @@ const WORKER_SECRETS = {
   AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: "/v2/credentials/value",
   ECS_CONTAINER_METADATA_URI_V4: "http://169.254.170.2/v4/value",
   FACTORY_DATABASE_URL: "postgres://factory:database-password-value@ledger/factory",
+  FACTORY_LEDGER_SECRET: JSON.stringify({ host: "ledger.example", port: 5432, username: "factory", password: "ledger-secret-password-value", dbname: "factory" }),
 };
 
 let worktree: string;

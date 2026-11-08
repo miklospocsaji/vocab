@@ -4,7 +4,9 @@
  * - The command line is checked first, so invalid input exits 2 with no configuration,
  *   database or network.
  * - Configuration comes from the environment (`config.ts`). The App's private key and the
- *   database URL are removed from `process.env` once read, so no child process inherits them.
+ *   ledger's secret or URL are removed from `process.env` once read, so no child process
+ *   inherits them.
+ * - Each connection attempt is bounded, so `runWorker`'s wait for a resuming Aurora can retry.
  * - The Forge is the factory's GitHub App (ADR 0009), and commits are its bot user's.
  * - The clone and the worktrees live in a temp home, removed at the end.
  * - Step Functions is reached with the task role's credentials, in the task's region.
@@ -16,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SendTaskFailureCommand, SendTaskSuccessCommand, SFNClient } from "@aws-sdk/client-sfn";
 import { appCommitter, createInstallationTokenProvider, GitHubForge } from "@vocab/factory-forge";
-import { DATABASE_URL_VAR, LedgerRecorder } from "@vocab/factory-ledger";
+import { DATABASE_URL_VAR, LEDGER_SECRET_VAR, LedgerRecorder } from "@vocab/factory-ledger";
 import { createRunner, loadRole } from "@vocab/factory-roles";
 import pg from "pg";
 import { ENV, parseWorkerArgs, USAGE, WorkerConfigError, workerConfig } from "./config.ts";
@@ -24,6 +26,8 @@ import type { TaskTokens } from "@vocab/factory-orchestrator";
 import { runWorker, WORKER_EXIT } from "./worker.ts";
 
 const PROPOSAL_AUTHOR = "proposal-author";
+/** One connection attempt; runWorker's waitForLedger retries within its 180 s. */
+const LEDGER_CONNECT_TIMEOUT_MS = 10_000;
 /** The factory's region (brief, section 5), if the task's environment does not name one. */
 const DEFAULT_REGION = "eu-central-1";
 
@@ -49,6 +53,7 @@ async function main(argv: string[]): Promise<number> {
   // Read once; no child process (git, openspec, the role session) needs them.
   Reflect.deleteProperty(process.env, ENV.privateKey);
   Reflect.deleteProperty(process.env, DATABASE_URL_VAR);
+  Reflect.deleteProperty(process.env, LEDGER_SECRET_VAR);
   Reflect.deleteProperty(process.env, ENV.taskToken);
 
   const token = createInstallationTokenProvider({
@@ -60,7 +65,8 @@ async function main(argv: string[]): Promise<number> {
   const committer = await appCommitter({ slug: config.app.slug, token });
   const forge = new GitHubForge({ owner: config.owner, repo: config.repo, token, committer });
 
-  const pool = new pg.Pool({ connectionString: config.databaseUrl });
+  // A bounded connect, so a resuming Aurora is retried rather than waited on forever.
+  const pool = new pg.Pool({ ...config.ledger, connectionTimeoutMillis: LEDGER_CONNECT_TIMEOUT_MS });
   const home = await mkdtemp(join(tmpdir(), "factory-worker-"));
   try {
     return await runWorker(argv, {

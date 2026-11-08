@@ -3,7 +3,8 @@
  * work item and reports the outcome by exit code (`WORKER_EXIT`), which the state machine
  * routes on. Every dependency is passed in; `main.ts` wires in the real ones.
  *
- * - Migrations run first, as in the CLI (`migrate()` takes an advisory lock).
+ * - The ledger is waited for first (up to 180 s, while a paused Aurora resumes), then migrations
+ *   run, as in the CLI (`migrate()` takes an advisory lock).
  * - `intake` needs no clone. `proposal` clones the repository afresh into the task's home
  *   and adds the work item's worktree there, unless the work item is past Proposal, in which
  *   case nothing is cloned and no role runs.
@@ -16,7 +17,7 @@
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { ForgeError, type Forge } from "@vocab/factory-forge";
-import { findWorkItemByIssue, migrate, type WorkItemRow } from "@vocab/factory-ledger";
+import { findWorkItemByIssue, migrate, waitForLedger, type WorkItemRow } from "@vocab/factory-ledger";
 import {
   approve,
   approved,
@@ -78,6 +79,9 @@ export async function runWorker(argv: string[], deps: WorkerDeps): Promise<numbe
 
   let code: number;
   try {
+    // A paused Aurora resumes on the first connection; inside the try, so a ledger that never
+    // answers still fails a paused AwaitApproval task below.
+    await waitForLedger(deps.db);
     await migrate(deps.db);
     code = await runState(args, deps);
   } catch (error) {

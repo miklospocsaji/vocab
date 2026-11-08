@@ -2,6 +2,9 @@
   "name": "@vocab/factory-worker",
   "private": true,
   "type": "module",
+  "exports": {
+    "./config": "./src/config.ts"
+  },
   "scripts": {
     "typecheck": "tsc -p ."
   },
