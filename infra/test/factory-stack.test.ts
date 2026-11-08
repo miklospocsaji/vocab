@@ -444,6 +444,23 @@ function resourcesFor(statements: { Action: string[]; Resource: unknown[] }[], a
   return statements.filter((statement) => statement.Action.includes(action)).flatMap((statement) => statement.Resource);
 }
 
+/** The worker task definition's family: what the states and the webhook run, at its latest revision. */
+function workerFamily(): string {
+  const family = taskDefinitionOf("WorkerTaskDefinitionArn")["Family"];
+  if (typeof family !== "string" || family === "") throw new Error("the worker task definition has no literal family");
+  return family;
+}
+
+/** ecs:RunTask's resources: the worker's family at any revision, and nothing that names a revision. */
+function expectWorkerFamilyOnly(resources: unknown[]): void {
+  expect(resources).toHaveLength(1);
+  const text = JSON.stringify(resources[0]);
+  expect(text).toContain(`:task-definition/${workerFamily()}:*`);
+  expect(target(resources[0])).toBeUndefined();
+  expect(text).not.toContain(outputTarget("WorkerTaskDefinitionArn"));
+  expect(text).not.toContain(String(taskDefinitionOf("BoundaryCheckTaskDefinitionArn")["Family"]));
+}
+
 function workerRoles(): string[] {
   const taskDefinition = taskDefinitionOf("WorkerTaskDefinitionArn");
   return [target(taskDefinition["TaskRoleArn"]), target(taskDefinition["ExecutionRoleArn"])].map((role) => role ?? "");
@@ -474,7 +491,8 @@ describe("factory stack: webhook Lambda", () => {
     expect(variables[WEBHOOK_ENV.secretParameter]).toBe(PARAMETERS.githubWebhookSecret);
     expect(variables[WEBHOOK_ENV.container]).toBe(WORKER_CONTAINER);
     expect(target(variables[WEBHOOK_ENV.stateMachineArn])).toBe(only("AWS::StepFunctions::StateMachine")[0]);
-    expect(target(variables[WEBHOOK_ENV.taskDefinition])).toBe(outputTarget("WorkerTaskDefinitionArn"));
+    // The family, so `/approve` runs the latest revision (exit run 2: a deploy deregistered the pinned one).
+    expect(variables[WEBHOOK_ENV.taskDefinition]).toBe(workerFamily());
     expect(JSON.stringify(variables)).not.toMatch(/secretsmanager|SecretTargetAttachment/i);
   });
 
@@ -487,7 +505,7 @@ describe("factory stack: webhook Lambda", () => {
       new Set(["states:StartExecution", "ecs:RunTask", "iam:PassRole", "ssm:GetParameter"]),
     );
     expect(resourcesFor(statements, "states:StartExecution").map(target)).toEqual([only("AWS::StepFunctions::StateMachine")[0]]);
-    expect(resourcesFor(statements, "ecs:RunTask").map(target)).toEqual([outputTarget("WorkerTaskDefinitionArn")]);
+    expectWorkerFamilyOnly(resourcesFor(statements, "ecs:RunTask"));
     expect(new Set(resourcesFor(statements, "iam:PassRole").map(target))).toEqual(new Set(workerRoles()));
     const parameters = resourcesFor(statements, "ssm:GetParameter");
     expect(parameters).toHaveLength(1);
@@ -514,9 +532,18 @@ describe("factory stack: state machine", () => {
     expect(machine["StateMachineType"] ?? "STANDARD").toBe("STANDARD");
     const definition = JSON.stringify(machine["DefinitionString"]);
     expect(definition).toContain('\\"QueryLanguage\\":\\"JSONata\\"');
-    expect(definition).toContain(outputTarget("WorkerTaskDefinitionArn"));
     expect(definition).not.toContain(outputTarget("BoundaryCheckTaskDefinitionArn"));
     expect(template.findOutputs("StateMachineArn")).not.toEqual({});
+  });
+
+  it("names the worker's task definition family, never a revision, so a paused execution survives a deploy", () => {
+    // Exit run 2: an execution keeps the definition it started with, and a deploy that changes
+    // the image deregisters the old revision, so a revision in the definition breaks Approved.
+    const [, machine] = only("AWS::StepFunctions::StateMachine");
+    const definition = JSON.stringify(machine["DefinitionString"]);
+    expect(definition).toContain(`\\"TaskDefinition\\":\\"${workerFamily()}\\"`);
+    expect(definition).not.toContain(outputTarget("WorkerTaskDefinitionArn"));
+    expect(definition).not.toMatch(/task-definition\//);
   });
 
   it("may run only the worker task definition and pass only its roles", () => {
@@ -527,7 +554,7 @@ describe("factory stack: state machine", () => {
     expect(new Set(statements.flatMap((statement) => statement.Action))).toEqual(
       new Set(["ecs:RunTask", "ecs:StopTask", "ecs:DescribeTasks", "iam:PassRole", "events:PutTargets", "events:PutRule", "events:DescribeRule"]),
     );
-    expect(resourcesFor(statements, "ecs:RunTask").map(target)).toEqual([outputTarget("WorkerTaskDefinitionArn")]);
+    expectWorkerFamilyOnly(resourcesFor(statements, "ecs:RunTask"));
     expect(new Set(resourcesFor(statements, "iam:PassRole").map(target))).toEqual(new Set(workerRoles()));
     // StopTask and DescribeTasks for the `.sync` integration, on the factory cluster's tasks only.
     for (const action of ["ecs:StopTask", "ecs:DescribeTasks"]) {

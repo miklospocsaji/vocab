@@ -20,6 +20,7 @@ import { ESCALATION_REASON, WORKER_EXIT } from "./exit-codes.ts";
 /** Where and how the state machine runs worker tasks. In CDK, these are tokens. */
 export interface WorkerTaskConfig {
   cluster: string;
+  /** The worker task definition's family, never a revision: ECS runs its latest revision. */
   taskDefinition: string;
   subnets: string[];
   securityGroup: string;

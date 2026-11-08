@@ -218,8 +218,13 @@ export class FactoryStack extends Stack {
     // Orchestration: the work item's state machine, which runs the worker and nothing else (ADR 0002).
     const workerRoleArns = [this.taskDefinition.taskRole.roleArn, this.taskDefinition.obtainExecutionRole().roleArn];
     const inCluster = { ArnEquals: { "ecs:cluster": this.cluster.clusterArn } };
+    // States and `/approve` run the worker's family, which ECS resolves to its latest revision.
+    // An execution keeps the definition it started with, and a deploy that changes the image
+    // deregisters the old revision, so naming a revision would break a paused execution
+    // (exit run 2, 2026-11-08). The policies allow the family at any revision, and nothing else.
+    const workerFamilyArn = this.formatArn({ service: "ecs", resource: "task-definition", resourceName: `${this.taskDefinition.family}:*` });
     const stateMachineRole = new Role(this, "StateMachineRole", { assumedBy: new ServicePrincipal("states.amazonaws.com") });
-    stateMachineRole.addToPolicy(new PolicyStatement({ actions: ["ecs:RunTask"], resources: [this.taskDefinition.taskDefinitionArn], conditions: inCluster }));
+    stateMachineRole.addToPolicy(new PolicyStatement({ actions: ["ecs:RunTask"], resources: [workerFamilyArn], conditions: inCluster }));
     stateMachineRole.addToPolicy(
       new PolicyStatement({
         actions: ["ecs:StopTask", "ecs:DescribeTasks"],
@@ -235,7 +240,7 @@ export class FactoryStack extends Stack {
     );
     const workerTask = {
       cluster: this.cluster.clusterArn,
-      taskDefinition: this.taskDefinition.taskDefinitionArn,
+      taskDefinition: this.taskDefinition.family,
       subnets: vpc.publicSubnets.map((subnet) => subnet.subnetId),
       securityGroup: workerSecurityGroup.securityGroupId,
       container: WORKER_CONTAINER,
@@ -273,7 +278,7 @@ export class FactoryStack extends Stack {
       },
     });
     this.webhook.addToRolePolicy(new PolicyStatement({ actions: ["states:StartExecution"], resources: [this.stateMachine.stateMachineArn] }));
-    this.webhook.addToRolePolicy(new PolicyStatement({ actions: ["ecs:RunTask"], resources: [this.taskDefinition.taskDefinitionArn], conditions: inCluster }));
+    this.webhook.addToRolePolicy(new PolicyStatement({ actions: ["ecs:RunTask"], resources: [workerFamilyArn], conditions: inCluster }));
     this.webhook.addToRolePolicy(new PolicyStatement({ actions: ["iam:PassRole"], resources: workerRoleArns }));
     this.webhook.addToRolePolicy(
       new PolicyStatement({

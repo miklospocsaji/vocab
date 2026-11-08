@@ -7,7 +7,8 @@ export const WEBHOOK_ENV = {
   repository: "FACTORY_GITHUB_REPOSITORY",
   owner: "FACTORY_OWNER",
   cluster: "FACTORY_CLUSTER_ARN",
-  taskDefinition: "FACTORY_WORKER_TASK_DEFINITION_ARN",
+  /** The worker task definition's family, so RunTask takes its latest revision. */
+  taskDefinition: "FACTORY_WORKER_TASK_DEFINITION",
   subnets: "FACTORY_WORKER_SUBNET_IDS",
   securityGroup: "FACTORY_WORKER_SECURITY_GROUP_ID",
   container: "FACTORY_WORKER_CONTAINER",
