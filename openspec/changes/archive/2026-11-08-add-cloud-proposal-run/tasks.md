@@ -111,4 +111,4 @@ Unit tests run in `pnpm check` with fakes for GitHub and AWS and the real local 
   - the branch holds a change that passes `openspec validate --strict`, committed by the App's bot
 
   Then the owner comments `/approve`. Confirm "Owner's approval resumes the execution": the execution succeeds, and the work item is `proposal-approved`. Record timings, cost and links in the M2 PR description.
-- [ ] 4.2 Update `CLAUDE.md`: `infra:*`, `test:cloud` and `test:docker`; the `infra` and `factory/worker` packages; how to read cloud cost. Archive `add-factory-worker`, then `add-cloud-proposal-run`.
+- [x] 4.2 Update `CLAUDE.md`: `infra:*`, `test:cloud` and `test:docker`; the `infra` and `factory/worker` packages; how to read cloud cost. Archive `add-factory-worker`, then `add-cloud-proposal-run`.
