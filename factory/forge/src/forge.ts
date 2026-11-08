@@ -34,6 +34,11 @@ export interface Forge {
   createBranch(branch: string): Promise<CreatedBranch>;
   /** Pushes the worktree's branch to the forge's repository. */
   pushBranch(options: PushBranchOptions): Promise<void>;
+  /**
+   * Clones the forge's repository into `directory`, which must not exist yet; its parent must.
+   * The clone's `origin` is the repository, and no credential is stored in the clone.
+   */
+  clone(directory: string): Promise<void>;
 }
 
 export type ForgeErrorKind = "not-found" | "unauthorized" | "failed";

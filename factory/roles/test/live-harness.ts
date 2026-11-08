@@ -10,7 +10,7 @@ import { query as sdkQuery, type Options, type SDKMessage, type SDKResultMessage
 import { expect } from "vitest";
 import { stringify } from "yaml";
 import { loadRole, type Role, type RoleConfig } from "../src/config.ts";
-import type { PromptIssue } from "../src/prompt.ts";
+import type { PromptArtifact, PromptIssue, RetryEvidence } from "../src/prompt.ts";
 import { AttemptFailed, createRunner, type QueryFn, type Recorder } from "../src/runner.ts";
 
 export const LIVE_MODEL = "claude-haiku-5-5";
@@ -128,6 +128,10 @@ export interface ProbeOptions {
   env?: Record<string, string | undefined>;
   /** Changes the options the runner built before the real `query` sees them (control runs only). */
   alterOptions?: (options: Options) => Options;
+  /** The files already in the change folder, as the Proposal handler passes them on a retry; defaults to none. */
+  changeFiles?: PromptArtifact[];
+  /** The previous attempt's failure, as the Proposal handler passes it on a retry. */
+  evidence?: RetryEvidence;
 }
 
 /** One real runner attempt for the probe role; every message the recorder saw is kept. */
@@ -148,14 +152,18 @@ export async function runProbe(role: Role, worktree: string, probe: ProbeOptions
   const runRole = createRunner({ recorder, query, ...(probe.env === undefined ? {} : { env: probe.env }) });
   let outcome: unknown;
   try {
-    outcome = await runRole(role, {
-      id: `live-${role.name}`,
-      changeId: probe.changeId ?? CHANGE_ID,
-      worktree,
-      issue: probe.issue ?? { title: "Boundary probe", body: "Follow your role instructions." },
-      changeFiles: [],
-      specs: [],
-    });
+    outcome = await runRole(
+      role,
+      {
+        id: `live-${role.name}`,
+        changeId: probe.changeId ?? CHANGE_ID,
+        worktree,
+        issue: probe.issue ?? { title: "Boundary probe", body: "Follow your role instructions." },
+        changeFiles: probe.changeFiles ?? [],
+        specs: [],
+      },
+      probe.evidence,
+    );
   } catch (error) {
     if (!(error instanceof AttemptFailed)) throw error;
     outcome = error;
@@ -215,16 +223,33 @@ export function writeAttempts(messages: SDKMessage[], worktree: string, path: st
   });
 }
 
+/** The text of every tool result the session returned to the model, joined. */
+export function toolResultsText(messages: SDKMessage[]): string {
+  return toolCalls(messages)
+    .map((call) => toolOutcome(messages, call.id)?.text ?? "")
+    .join("\n");
+}
+
 /** The failure reason of an attempt, or "succeeded". */
 export function outcomeOf(attempt: LiveAttempt): string {
   return attempt.outcome instanceof AttemptFailed ? attempt.outcome.reason : "succeeded";
+}
+
+/** The first line of a failed attempt's evidence, shortened, so a run that never reached the model says why. */
+function failureLine(attempt: LiveAttempt): string | undefined {
+  if (!(attempt.outcome instanceof AttemptFailed)) return undefined;
+  const line = attempt.outcome.evidence.split("\n").find((text) => text.trim() !== "") ?? "";
+  return line.length > 200 ? `${line.slice(0, 200)}…` : line;
 }
 
 /** Per-test costs of a live test file, printed once at the end (`--silent=false` shows it). */
 export function createCostLog(): { track: (test: string, attempt: LiveAttempt) => void; print: () => void } {
   const costs: { test: string; usd: number; outcome: string }[] = [];
   return {
-    track: (test, attempt) => costs.push({ test, usd: attempt.costUsd, outcome: outcomeOf(attempt) }),
+    track: (test, attempt) => {
+      const why = failureLine(attempt);
+      costs.push({ test, usd: attempt.costUsd, outcome: why === undefined ? outcomeOf(attempt) : `${outcomeOf(attempt)}: ${why}` });
+    },
     print: () => {
       const total = costs.reduce((sum, cost) => sum + cost.usd, 0);
       const lines = costs.map((cost) => `  ${cost.test}: $${cost.usd.toFixed(4)} (${cost.outcome})`);

@@ -49,6 +49,18 @@ const PARENT_ENV = {
   ANTHROPIC_BASE_URL: "https://proxy.example",
 };
 
+// What a worker task holds for itself, none of it for a role session.
+const WORKER_SECRETS = {
+  FACTORY_GITHUB_TOKEN: "github-token-value",
+  AWS_ACCESS_KEY_ID: "aws-access-key-id-value",
+  AWS_SECRET_ACCESS_KEY: "aws-secret-access-key-value",
+  AWS_SESSION_TOKEN: "aws-session-token-value",
+  AWS_CONTAINER_CREDENTIALS_RELATIVE_URI: "/v2/credentials/value",
+  ECS_CONTAINER_METADATA_URI_V4: "http://169.254.170.2/v4/value",
+  FACTORY_DATABASE_URL: "postgres://factory:database-password-value@ledger/factory",
+  FACTORY_LEDGER_SECRET: JSON.stringify({ host: "ledger.example", port: 5432, username: "factory", password: "ledger-secret-password-value", dbname: "factory" }),
+};
+
 let worktree: string;
 
 function sampleRole(overrides: Partial<Role> = {}): Role {
@@ -397,11 +409,9 @@ describe("runRole", () => {
 
     it("hooks the path guard, with the work item's change id filled in, onto Edit, Write and NotebookEdit", async () => {
       const options = onlyOptions(await run([init(), success(VALID_RESULT)]));
-      const matchers = options.hooks?.PreToolUse ?? [];
-      expect(matchers).toHaveLength(1);
-      expect(matchers[0]?.matcher).toBe("Edit|Write|NotebookEdit");
-      expect(matchers[0]?.hooks).toHaveLength(1);
-      const hook = matchers[0]?.hooks[0];
+      const matcher = (options.hooks?.PreToolUse ?? []).find((entry) => entry.matcher === "Edit|Write|NotebookEdit");
+      expect(matcher?.hooks).toHaveLength(1);
+      const hook = matcher?.hooks[0];
       if (hook === undefined) throw new Error("no PreToolUse hook");
 
       const attempt = (filePath: string) =>
@@ -422,6 +432,31 @@ describe("runRole", () => {
       const denied = hookDecision(await attempt(`${CHANGE}/design.md`));
       expect(denied.decision).toBe("deny");
       expect(denied.reason).toContain(`${CHANGE}/proposal.md`);
+    });
+
+    it("hooks the read guard, on the work item's worktree, onto Read, Grep and Glob", async () => {
+      const options = onlyOptions(await run([init(), success(VALID_RESULT)]));
+      const matcher = (options.hooks?.PreToolUse ?? []).find((entry) => entry.matcher === "Read|Grep|Glob");
+      expect(matcher?.hooks).toHaveLength(1);
+      const hook = matcher?.hooks[0];
+      if (hook === undefined) throw new Error("no read guard hook");
+
+      const attempt = (filePath: string) =>
+        hook(
+          {
+            hook_event_name: "PreToolUse",
+            session_id: SESSION,
+            transcript_path: join(worktree, "transcript.jsonl"),
+            cwd: worktree,
+            tool_name: "Read",
+            tool_input: { file_path: filePath },
+            tool_use_id: "toolu_1",
+          },
+          "toolu_1",
+          { signal: new AbortController().signal },
+        );
+      expect(hookDecision(await attempt(`${CHANGE}/proposal.md`)).decision).toBeUndefined();
+      expect(hookDecision(await attempt("/proc/self/environ")).decision).toBe("deny");
     });
   });
 
@@ -448,6 +483,84 @@ describe("runRole", () => {
       expect(env?.["PATH"]?.split(delimiter)).toEqual([FACTORY_BIN, "/usr/local/bin", "/usr/bin"]);
       expect(env?.["HOME"]).toBe(PARENT_ENV.HOME);
       expect(env?.["LANG"]).toBe(PARENT_ENV.LANG);
+    });
+
+    it.each([
+      ["subscription", "none", "CLAUDE_CODE_OAUTH_TOKEN"],
+      ["api-key", "ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"],
+    ] as const)("Scenario: Factory credentials do not reach the role session (%s mode)", async (authMode, apiKeySource, credential) => {
+      const role = sampleRole({ authMode });
+      const { env } = onlyOptions(await run([init(apiKeySource), success(VALID_RESULT)], { role, env: { ...PARENT_ENV, ...WORKER_SECRETS } }));
+      for (const name of Object.keys(WORKER_SECRETS)) expect(env, name).not.toHaveProperty(name);
+      const passed = JSON.stringify(env);
+      for (const value of Object.values(WORKER_SECRETS)) expect(passed).not.toContain(value);
+      expect(env?.[credential]).toBe(PARENT_ENV[credential]);
+      if (authMode === "subscription") expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    });
+
+    it("passes the allowlisted variables and nothing else, so a new variable does not leak by default", async () => {
+      const allowlisted = {
+        TMPDIR: "/tmp/factory",
+        LC_ALL: "C.UTF-8",
+        LC_CTYPE: "C.UTF-8",
+        TZ: "UTC",
+        NODE_EXTRA_CA_CERTS: "/etc/ssl/rds.pem",
+      };
+      const parent = { ...PARENT_ENV, ...allowlisted, SOME_FUTURE_SECRET: "future-secret" };
+      const { env } = onlyOptions(await run([init(), success(VALID_RESULT)], { env: parent }));
+      expect(env).toMatchObject(allowlisted);
+      expect(Object.keys(env ?? {}).sort()).toEqual(
+        [...Object.keys(allowlisted), "CLAUDE_CODE_OAUTH_TOKEN", "HOME", "LANG", "OPENSPEC_TELEMETRY", "PATH"].sort(),
+      );
+    });
+  });
+
+  describe("FACTORY_AUTH_MODE", () => {
+    const overriding = (mode: string) => ({ ...PARENT_ENV, FACTORY_AUTH_MODE: mode });
+
+    it("Scenario: Deployment overrides the configured mode", async () => {
+      const result = await run([init("ANTHROPIC_API_KEY"), success(VALID_RESULT)], {
+        role: sampleRole({ authMode: "subscription" }),
+        env: overriding("api-key"),
+      });
+      expect(result.outcome).toEqual({ value: VALID_RESULT });
+      const { env } = onlyOptions(result);
+      expect(env?.["ANTHROPIC_API_KEY"]).toBe(PARENT_ENV.ANTHROPIC_API_KEY);
+      expect(env).not.toHaveProperty("CLAUDE_CODE_OAUTH_TOKEN");
+      // The reported mode goes to the ledger through this message; factory/ledger/test/runner.test.ts follows it there.
+      expect(result.recorder.entries[0]?.message).toMatchObject({ subtype: "init", apiKeySource: "ANTHROPIC_API_KEY" });
+    });
+
+    it("overrides an api-key role to subscription too", async () => {
+      const result = await run([init("none"), success(VALID_RESULT)], {
+        role: sampleRole({ authMode: "api-key" }),
+        env: overriding("subscription"),
+      });
+      expect(result.outcome).toEqual({ value: VALID_RESULT });
+      const { env } = onlyOptions(result);
+      expect(env?.["CLAUDE_CODE_OAUTH_TOKEN"]).toBe(PARENT_ENV.CLAUDE_CODE_OAUTH_TOKEN);
+      expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    });
+
+    it.each([
+      ["subscription", "api-key", "none"],
+      ["api-key", "subscription", "ANTHROPIC_API_KEY"],
+    ] as const)("Scenario: Mismatched auth mode fails fast, against the override (config %s, override %s)", async (authMode, override, reported) => {
+      const result = await run([init(reported), toolUse(), success(VALID_RESULT)], { role: sampleRole({ authMode }), env: overriding(override) });
+      const error = failed(result.outcome);
+      expect(error.reason).toBe("auth-mode-mismatch");
+      expect(error.evidence).toContain(override);
+      expect(onlyOptions(result).abortController?.signal.aborted).toBe(true);
+      expect(result.pulled).toBe(1);
+    });
+
+    it.each(["bedrock", "API-KEY", ""])("fails the attempt before query() runs for the invalid value %j", async (value) => {
+      const result = await run([init(), success(VALID_RESULT)], { env: overriding(value) });
+      const error = failed(result.outcome);
+      expect(error.reason).toBe("config");
+      expect(error.evidence).toContain("FACTORY_AUTH_MODE");
+      expect(result.calls).toEqual([]);
+      expect(result.recorder.entries).toEqual([]);
     });
   });
 

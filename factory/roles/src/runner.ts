@@ -1,23 +1,25 @@
 /**
  * Runs one attempt of a role as an Agent SDK session: the role's tools, `dontAsk`
- * permissions, project-only settings, the path guard, the Bash sandbox (ADR 0007) and an
- * explicit child env with only the configured mode's credential (ADR 0006). Every message
- * goes to the Recorder. Anything but a valid result and a valid change is an AttemptFailed.
+ * permissions, project-only settings, the path and read guards, the Bash sandbox (ADR 0007)
+ * and a child env built from an allowlist, with only the effective auth mode's credential
+ * (ADR 0006). Every message goes to the Recorder. Anything but a valid result and a valid
+ * change is an AttemptFailed.
  */
 import { execFile } from "node:child_process";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { query as sdkQuery, type Options, type SDKMessage, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { writableFor, type Role } from "./config.ts";
-import { createPathGuard } from "./guard.ts";
+import { writableFor, type Role, type RoleConfig } from "./config.ts";
+import { createPathGuard, createReadGuard } from "./guard.ts";
 import { renderPrompt, type PromptArtifact, type PromptIssue, type RetryEvidence } from "./prompt.ts";
 
 const run = promisify(execFile);
 
 /** The factory's own bin: roles run its pinned openspec, never one from the worktree. */
 const FACTORY_BIN = resolve(import.meta.dirname, "../../../node_modules/.bin");
-const SCRUBBED_PREFIXES = ["ANTHROPIC_", "CLAUDE_CODE_"];
+/** All a session inherits from the worker's environment; PATH is handled apart, and LC_* also passes. */
+const INHERITED = new Set(["HOME", "TMPDIR", "LANG", "TZ", "NODE_EXTRA_CA_CERTS"]);
 /** Per auth mode: the one credential passed to the child, and the `apiKeySource` the init message must report. */
 const AUTH = {
   "api-key": { credential: "ANTHROPIC_API_KEY", apiKeySource: "ANTHROPIC_API_KEY" },
@@ -37,7 +39,8 @@ export type FailureReason =
   | "no-result"
   | "invalid-result"
   | "invalid-change"
-  | "auth-mode-mismatch";
+  | "auth-mode-mismatch"
+  | "config";
 
 export class AttemptFailed extends Error {
   readonly reason: FailureReason;
@@ -84,7 +87,8 @@ export function createRunner(options: RunnerOptions): RunRole {
   const { recorder, query = sdkQuery, env = process.env } = options;
 
   return async (role, item, evidence) => {
-    const auth = AUTH[role.authMode];
+    const authMode = effectiveAuthMode(role, env);
+    const auth = AUTH[authMode];
     const baseEnv = childEnv(env);
     const credential = env[auth.credential];
     const abortController = new AbortController();
@@ -108,6 +112,10 @@ export function createRunner(options: RunnerOptions): RunRole {
             {
               matcher: "Edit|Write|NotebookEdit",
               hooks: [createPathGuard({ role: role.name, worktree: item.worktree, writable: writableFor(role, item.changeId) })],
+            },
+            {
+              matcher: "Read|Grep|Glob",
+              hooks: [createReadGuard({ role: role.name, worktree: item.worktree })],
             },
           ],
         },
@@ -134,7 +142,7 @@ export function createRunner(options: RunnerOptions): RunRole {
           abortController.abort();
           throw new AttemptFailed(
             "auth-mode-mismatch",
-            `role ${role.name} is configured for ${role.authMode} (apiKeySource ${auth.apiKeySource}), but the session reported apiKeySource ${message.apiKeySource}`,
+            `role ${role.name} runs in ${authMode} mode (apiKeySource ${auth.apiKeySource}), but the session reported apiKeySource ${message.apiKeySource}`,
           );
         }
         if (message.type === "result") result = message;
@@ -158,11 +166,19 @@ export function createRunner(options: RunnerOptions): RunRole {
   };
 }
 
-/** The parent env without any credential or Claude Code override, with OpenSpec quiet and the factory's bin first on PATH. */
+/** FACTORY_AUTH_MODE if set, otherwise the role's config. The value is not echoed, in case a secret was set there by mistake. */
+function effectiveAuthMode(role: Role, env: Record<string, string | undefined>): RoleConfig["authMode"] {
+  const override = env["FACTORY_AUTH_MODE"];
+  if (override === undefined) return role.authMode;
+  if (override === "api-key" || override === "subscription") return override;
+  throw new AttemptFailed("config", "FACTORY_AUTH_MODE must be api-key or subscription");
+}
+
+/** Only the allowlisted variables of the parent env, with OpenSpec quiet and the factory's bin first on PATH. The caller adds the credential. */
 function childEnv(parent: Record<string, string | undefined>): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(parent)) {
-    if (value !== undefined && !SCRUBBED_PREFIXES.some((prefix) => key.startsWith(prefix))) env[key] = value;
+    if (value !== undefined && (INHERITED.has(key) || key.startsWith("LC_"))) env[key] = value;
   }
   env["OPENSPEC_TELEMETRY"] = "0";
   env["PATH"] = [FACTORY_BIN, ...(parent["PATH"] ? [parent["PATH"]] : [])].join(delimiter);

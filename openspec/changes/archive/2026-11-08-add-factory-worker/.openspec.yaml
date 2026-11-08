@@ -1,0 +1,6 @@
+schema: spec-driven
+created: 2026-11-01
+goal: "M2 step 1: one factory-worker image that runs a state for an issue,
+  with role sessions that hold no factory credentials, and a Forge that acts
+  as the factory's GitHub App"
+x-complexity: large

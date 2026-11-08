@@ -3,6 +3,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { ForgeError } from "../src/index.ts";
 import { FakeForge } from "../src/testing.ts";
 import { describeForgeContract } from "./forge-contract.ts";
 
@@ -117,6 +118,43 @@ describe("FakeForge", () => {
       expect(git(remote, "rev-parse", "refs/heads/add-x")).toBe(sha);
       expect(forge.branchSha("add-x")).toBe(sha);
       expect(await forge.branchExists("add-x")).toBe(true);
+    });
+  });
+
+  describe("clone", () => {
+    let root: string;
+
+    beforeEach(() => {
+      vi.stubEnv("GIT_CONFIG_GLOBAL", "/dev/null");
+      vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+      root = realpathSync(mkdtempSync(join(tmpdir(), "factory-fake-forge-")));
+    });
+
+    afterEach(() => {
+      vi.unstubAllEnvs();
+      rmSync(root, { recursive: true, force: true });
+    });
+
+    it("clones its remote, which becomes the clone's origin", async () => {
+      const remote = join(root, "remote.git");
+      git(root, "init", "--bare", "-b", "master", remote);
+      const seed = join(root, "seed");
+      git(root, "clone", remote, seed);
+      writeFileSync(join(seed, "README.md"), "# vocab\n");
+      git(seed, "add", "-A");
+      git(seed, "commit", "-m", "initial");
+      git(seed, "push", "origin", "master");
+      const forge = new FakeForge({ remote });
+      const clone = join(root, "clone");
+
+      await forge.clone(clone);
+
+      expect(git(clone, "remote", "get-url", "origin")).toBe(remote);
+      expect(git(clone, "rev-parse", "HEAD")).toBe(git(remote, "rev-parse", "refs/heads/master"));
+    });
+
+    it("rejects without a remote, since there is nothing to clone", async () => {
+      await expect(new FakeForge().clone(join(root, "clone"))).rejects.toBeInstanceOf(ForgeError);
     });
   });
 });

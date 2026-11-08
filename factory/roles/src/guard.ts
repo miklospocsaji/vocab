@@ -1,7 +1,9 @@
 /**
- * The `PreToolUse` path guard for Edit, Write and NotebookEdit. It denies any target that,
- * resolved against the worktree with symlinks followed, falls outside the role's writable
- * globs or outside the worktree. Allowed calls are left to the SDK permission rules.
+ * The `PreToolUse` guards on a role's file tools. The path guard, for Edit, Write and
+ * NotebookEdit, denies any target that, resolved against the worktree with symlinks followed,
+ * falls outside the role's writable globs or outside the worktree. The read guard does the
+ * same for Read, Grep and Glob against the worktree alone. Allowed calls are left to the SDK
+ * permission rules.
  */
 import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -20,13 +22,7 @@ export interface PathGuardOptions {
 export function createPathGuard(options: PathGuardOptions): HookCallback {
   const { role, worktree, writable } = options;
   const allowed = writable.length > 0 ? writable.join(", ") : "none (read-only role)";
-  const deny = (why: string): HookJSONOutput => ({
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: `role ${role}: ${why}. Writable paths: ${allowed}`,
-    },
-  });
+  const deny = (why: string): HookJSONOutput => denial(`role ${role}: ${why}. Writable paths: ${allowed}`);
 
   return async (input) => {
     if (input.hook_event_name !== "PreToolUse") return {};
@@ -48,6 +44,71 @@ export function createPathGuard(options: PathGuardOptions): HookCallback {
     }
     return {};
   };
+}
+
+/**
+ * Glob patterns that can leave their search root: an absolute or `~` start, or a `..` segment,
+ * also as an alternative inside braces or an extglob. A name that only contains dots is fine.
+ */
+const GLOB_LEAVES_ROOT = [/(?:^|[{,(|])[/~]/, /(?:^|[{,(|/])\.\.(?:$|[},)|/])/];
+
+export interface ReadGuardOptions {
+  /** The role name, used in the deny reason. */
+  role: string;
+  /** The work item's worktree; targets resolve against it. */
+  worktree: string;
+}
+
+export function createReadGuard(options: ReadGuardOptions): HookCallback {
+  const { role, worktree } = options;
+  const deny = (why: string): HookJSONOutput => denial(`role ${role}: ${why}. Reads are limited to the worktree`);
+
+  return async (input) => {
+    if (input.hook_event_name !== "PreToolUse") return {};
+    const toolInput = (input.tool_input ?? {}) as Record<string, unknown>;
+
+    if (input.tool_name === "Glob") {
+      const pattern = toolInput["pattern"];
+      if (typeof pattern !== "string") return deny("Glob has no pattern");
+      if (GLOB_LEAVES_ROOT.some((form) => form.test(pattern))) return deny(`the pattern ${pattern} can leave the worktree`);
+    }
+
+    // Grep and Glob search the session's cwd, the worktree, when they have no path.
+    const target = input.tool_name === "Read" ? toolInput["file_path"] : (toolInput["path"] ?? ".");
+    if (typeof target !== "string" || target === "") return deny(`${input.tool_name} has no target path`);
+    // The tools expand a leading ~ themselves, so it would otherwise resolve as a folder in the worktree.
+    if (target.startsWith("~")) return deny(`${target} is outside the worktree`);
+
+    const root = await realpath(worktree);
+    const lexical = resolve(root, target);
+    if (!isWithin(root, lexical)) return deny(`${target} is outside the worktree`);
+
+    let real: string | undefined;
+    try {
+      real = await realTarget(lexical);
+    } catch {
+      // A symlink loop or a file used as a directory: what cannot be checked is not read.
+      return deny(`${target} cannot be resolved`);
+    }
+    if (real === undefined) return deny(`${target} is a dangling symlink`);
+    if (!isWithin(root, real)) return deny(`${target} resolves outside the worktree`);
+    return {};
+  };
+}
+
+function denial(reason: string): HookJSONOutput {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: reason,
+    },
+  };
+}
+
+/** True if `path` is the worktree root or below it; both absolute and normalised. */
+function isWithin(root: string, path: string): boolean {
+  return path === root || isInside(root, path);
 }
 
 /** True if `path` is strictly below `root`; both absolute and normalised. */

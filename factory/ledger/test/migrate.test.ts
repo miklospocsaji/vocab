@@ -18,11 +18,11 @@ async function tables(): Promise<string[]> {
 
 describe("migrate", () => {
   it("applies each migration once and is idempotent", async () => {
-    expect(await migrate(db.pool)).toEqual(["0001_init"]);
-    expect(await tables()).toEqual(["attempts", "events", "messages", "schema_migrations", "work_items"]);
+    expect(await migrate(db.pool)).toEqual(["0001_init", "0002_cloud"]);
+    expect(await tables()).toEqual(["approvals", "attempts", "events", "messages", "schema_migrations", "work_items"]);
 
     expect(await migrate(db.pool)).toEqual([]);
     const { rows } = await db.pool.query<{ version: string }>("SELECT version FROM schema_migrations");
-    expect(rows).toEqual([{ version: "0001_init" }]);
+    expect(rows.map((row) => row.version).sort()).toEqual(["0001_init", "0002_cloud"]);
   });
 });

@@ -8,6 +8,7 @@
  * comments stay in memory either way.
  */
 import { execFile, execFileSync } from "node:child_process";
+import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { ForgeError, type CreatedBranch, type Forge, type Issue, type PushBranchOptions } from "./forge.ts";
 
@@ -135,6 +136,16 @@ export class FakeForge implements Forge {
       if (this.#remote === undefined) this.#branches.set(branch, await git(worktree, "rev-parse", `refs/heads/${branch}`));
     } catch (error) {
       throw new ForgeError(`pushing branch ${branch} failed: ${error instanceof Error ? error.message : String(error)}`, "failed");
+    }
+  }
+
+  /** Clones the `remote`; without one there is no repository to clone. */
+  async clone(directory: string): Promise<void> {
+    if (this.#remote === undefined) throw new ForgeError("FakeForge has no remote to clone", "failed");
+    try {
+      await git(dirname(directory), "clone", "--quiet", this.#remote, directory);
+    } catch (error) {
+      throw new ForgeError(`cloning into ${directory} failed: ${error instanceof Error ? error.message : String(error)}`, "failed");
     }
   }
 

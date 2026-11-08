@@ -21,8 +21,8 @@ export const RUN_UNTIL: readonly RunUntil[] = ["proposal"];
 /** Where a run with each `--until` leaves the work item. */
 const STOP_STATE: Record<RunUntil, WorkItemState> = { proposal: "awaiting-proposal-approval" };
 
-/** The order of the M1 states; `escalated` is outside it. */
-const ORDER: readonly WorkItemState[] = ["intake", "proposal", "awaiting-proposal-approval"];
+/** The order of the states; `escalated` is outside it. `proposal-approved` is reached in the cloud only. */
+const ORDER: readonly WorkItemState[] = ["intake", "proposal", "awaiting-proposal-approval", "proposal-approved"];
 
 export interface RunRequest {
   issueNumber: number;
@@ -66,8 +66,15 @@ export async function runWorkItem(ctx: ProposalContext, request: RunRequest): Pr
         throw new Error(`work item ${workItem.changeId} is in state ${workItem.state}, which the M1 run loop cannot handle`);
     }
   }
-  if (transition.kind === "reject") return { kind: "rejected", reason: transition.reason };
-  return { kind: "escalated", workItem: transition.workItem, reason: transition.reason, advanced: true };
+  switch (transition.kind) {
+    case "reject":
+      return { kind: "rejected", reason: transition.reason };
+    case "escalate":
+      return { kind: "escalated", workItem: transition.workItem, reason: transition.reason, advanced: true };
+    case "duplicate":
+      // Only a cloud Intake, with an execution ARN, returns it; a local run never does.
+      return { kind: "stopped", workItem: transition.workItem, advanced: false };
+  }
 }
 
 /** The outcome for a work item that needs no handler at all, if it is one. */

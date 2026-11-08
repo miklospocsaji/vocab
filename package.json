@@ -13,12 +13,19 @@
     "spec:validate": "OPENSPEC_TELEMETRY=0 openspec validate --all --strict --no-interactive",
     "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm spec:validate",
     "test:live": "vitest run --project live",
+    "test:docker": "vitest run --project docker",
+    "test:cloud": "vitest run --project cloud",
     "db:up": "docker compose up -d --wait ledger",
-    "factory": "node factory/cli/src/main.ts"
+    "factory": "node factory/cli/src/main.ts",
+    "infra:synth": "pnpm --dir infra exec cdk synth",
+    "infra:diff": "pnpm --dir infra exec cdk diff",
+    "infra:deploy": "pnpm --dir infra exec cdk deploy"
+  },
+  "dependencies": {
+    "@fission-ai/openspec": "1.15.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@fission-ai/openspec": "1.15.0",
     "@types/node": "24.19.2",
     "eslint": "10.13.0",
     "globals": "17.13.0",

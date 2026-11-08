@@ -1,0 +1,22 @@
+{
+  "name": "@vocab/factory-worker",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./config": "./src/config.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@aws-sdk/client-sfn": "3.1161.0",
+    "@vocab/factory-forge": "workspace:*",
+    "@vocab/factory-ledger": "workspace:*",
+    "@vocab/factory-orchestrator": "workspace:*",
+    "@vocab/factory-roles": "workspace:*",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "8.23.1"
+  }
+}

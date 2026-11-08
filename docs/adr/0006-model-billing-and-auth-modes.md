@@ -1,6 +1,6 @@
 # 0006 Model billing and auth modes
 
-Status: accepted (2026-10-27; owner decision of 2026-10-27)
+Status: accepted (2026-10-27; owner decision of 2026-10-27); amended 2026-11-02 (`FACTORY_AUTH_MODE`)
 
 ## Context
 
@@ -17,6 +17,7 @@ M1 runs every role locally on the owner's laptop. From M2, roles run unattended 
 - Each role config has `authMode: api-key | subscription`. The runner builds the SDK child's environment explicitly:
   - it passes only the credential for the configured mode
   - it scrubs every inherited `ANTHROPIC_*` and `CLAUDE_CODE_*` variable, so a parent Claude Code session or a stray key cannot change the mode
+- A deployment can override the mode for every role with `FACTORY_AUTH_MODE` (`api-key` or `subscription`), and the factory stack sets `api-key`. Role configs then keep their local default, and one config serves both environments. Any other value fails the attempt before a session starts.
 - The runner verifies the mode from the init message's `apiKeySource`. A mismatch fails the attempt with `auth-mode-mismatch` before any tool runs, and the work item escalates without a retry.
 - The ledger records, per attempt:
   - the auth mode the SDK reported

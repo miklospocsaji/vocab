@@ -11,7 +11,7 @@ import { delimiter, dirname, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { closeAttempt, listAttempts, openAttempt, setWorkItemState, type AttemptRow, type WorkItemRow } from "@vocab/factory-ledger";
 import { AttemptFailed, type PromptArtifact, type RetryEvidence, type Role, type RunRole, type WorkItem } from "@vocab/factory-roles";
-import { commitChange, ensureWorktree } from "./git.ts";
+import { commitChange, ensureWorktree, type GitIdentity } from "./git.ts";
 import type { HandlerContext, Transition, WorkItemState } from "./handler.ts";
 
 const run = promisify(execFile);
@@ -35,6 +35,8 @@ export interface ProposalContext extends HandlerContext {
   repo: string;
   /** The factory's home directory; defaults to `factoryHome()`. */
   home?: string;
+  /** The author and committer of the proposal commit; defaults to `FACTORY_GIT_IDENTITY`. */
+  committer?: GitIdentity;
 }
 
 export async function proposal(ctx: ProposalContext, item: WorkItemRow): Promise<Transition> {
@@ -82,11 +84,13 @@ export async function proposal(ctx: ProposalContext, item: WorkItemRow): Promise
       if (error.reason === "auth-mode-mismatch") break;
       continue;
     }
-    await closeAttempt(db, attempt.id, { outcome: "succeeded" });
+    // The validated result stays on its attempt, so later states (the summary in the cloud) read it from the ledger.
+    await closeAttempt(db, attempt.id, { outcome: "succeeded", result });
 
     await commitChange({
       worktree,
       changeId: item.changeId,
+      ...(ctx.committer === undefined ? {} : { identity: ctx.committer }),
       message: `docs(${item.changeId}): propose the change\n\nWritten by the ${role.name} role for issue #${String(item.issueNumber)}.`,
     });
     await forge.pushBranch({ worktree, branch: item.branch });

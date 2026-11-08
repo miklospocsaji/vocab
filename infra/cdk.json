@@ -1,0 +1,12 @@
+{
+  "app": "node bin/factory.ts",
+  "context": {
+    "factory:githubRepository": "miklospocsaji/vocab",
+    "factory:githubAppId": 5586098,
+    "factory:githubAppInstallationId": 177972181,
+    "factory:githubAppSlug": "vocab-factory",
+    "factory:owner": "miklospocsaji",
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true
+  }
+}
