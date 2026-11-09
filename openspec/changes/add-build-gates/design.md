@@ -14,10 +14,10 @@ implementer's session ──▶ runGates(mode: green) ──▶ gates.json ─�
 ### `factory/gates` (new package `@vocab/factory-gates`)
 
 - `src/run.ts`: `runGates({ worktree, changeId, task, mode, secrets })` returns a `GatesResult`. `task` is `{ id, scenarios }`, where `scenarios` are this task's titles. In green mode it also carries `coveredSoFar`, the titles of every task done so far, this one included. `secrets` are the values to redact.
-- `src/checks.ts`: one function per check, each running one command with `execFile` (never a shell) in the worktree, with a fixed environment: `PATH`, `HOME`, `TMPDIR`, `CI=1`, `OPENSPEC_TELEMETRY=0`, `NODE_OPTIONS` unset. Nothing else is inherited.
+- `src/checks.ts`: one function per check, each running one command with `spawn` (never a shell) in the worktree, keeping the end of its combined stdout and stderr, with a fixed environment: `PATH`, `HOME`, `TMPDIR`, `CI=1`, `OPENSPEC_TELEMETRY=0`, `NODE_OPTIONS` unset. Nothing else is inherited.
   - `typecheck`: `pnpm typecheck`
   - `lint`: `pnpm lint`
-  - `unit`: `pnpm exec vitest run --project unit --reporter=json --outputFile=<tmp> app/`
+  - `unit`: `pnpm exec vitest run --project unit --reporter=default --reporter=json --outputFile.json=<tmp> app/`. The JSON reporter alone prints nothing, not even what a test logs, so the default reporter supplies the output.
   - `spec`: `pnpm exec openspec validate <changeId> --strict --no-interactive`
   - `coverage`: in-process; see below
 - `src/vitest-report.ts`: reads Vitest's JSON report (its `testResults[]`, with `status` and `message` per file and `assertionResults[]` per test) into `{ file, loadError?, tests: [{ name, status, failure? }] }`. A file with `status: "failed"` and no assertion results, or with a message and no tests run, is a load error.

@@ -3,7 +3,8 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["**/node_modules/", "**/dist/", "**/coverage/", "**/cdk.out/", ".claude/", "openspec/"] },
+  // The gates' fixture worktrees are broken on purpose in places; the gates tests lint them in a copy.
+  { ignores: ["**/node_modules/", "**/dist/", "**/coverage/", "**/cdk.out/", ".claude/", "openspec/", "factory/gates/test/fixtures/"] },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {
