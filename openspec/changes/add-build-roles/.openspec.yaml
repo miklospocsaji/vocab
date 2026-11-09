@@ -1,0 +1,6 @@
+schema: spec-driven
+created: 2026-11-08
+goal: "M3.2: the architect, design-reviewer, planner, test-author, implementer
+  and failure-classifier roles, with Bash roles confined to a build container
+  that holds only the model credential"
+x-complexity: large
