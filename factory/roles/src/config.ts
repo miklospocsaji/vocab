@@ -18,6 +18,42 @@ const TASK_STUBS = "{taskStubs}";
 /** True for the Bash tool and for any `Bash(...)` rule. */
 const isBash = (entry: string): boolean => entry === "Bash" || entry.startsWith("Bash(");
 
+/**
+ * Bash rules the runner denies in every session, whatever the role's allowlist (SDK
+ * `disallowedTools`; deny wins over allow). They match command strings, so they stop the
+ * model's own commands, not code those commands run (design.md, accepted risks).
+ */
+export const DENY_LIST: readonly string[] = [
+  "Bash(git push:*)",
+  "Bash(curl:*)",
+  "Bash(wget:*)",
+  "Bash(ssh:*)",
+  "Bash(scp:*)",
+  "Bash(nc:*)",
+  "Bash(pnpm add:*)",
+  "Bash(pnpm install:*)",
+  "Bash(npm:*)",
+  "Bash(npx:*)",
+];
+
+/** The command prefix each denied rule matches. */
+const DENIED_COMMANDS = DENY_LIST.map((rule) => rule.slice("Bash(".length, -":*)".length));
+
+/**
+ * The denied command an allow rule would grant, if any: a bare `Bash` grants all; a rule with a
+ * wildcard grants every command starting with the part before it; a rule without one grants that
+ * command. It overlaps when one side's prefix starts with the other's.
+ */
+function deniedBy(rule: string): string | undefined {
+  if (rule === "Bash") return DENIED_COMMANDS[0];
+  if (!rule.startsWith("Bash(") || !rule.endsWith(")")) return undefined;
+  const body = rule.slice("Bash(".length, -1);
+  const star = body.indexOf("*");
+  if (star === -1) return DENIED_COMMANDS.find((command) => body.startsWith(command));
+  const prefix = body.slice(0, star).replace(/:$/, "");
+  return DENIED_COMMANDS.find((command) => command.startsWith(prefix) || prefix.startsWith(command));
+}
+
 export const RoleConfigSchema = z.strictObject({
   name: z.string().min(1),
   model: z.string().min(1),
@@ -39,6 +75,10 @@ export const RoleConfigSchema = z.strictObject({
   resultSchema: z.string().refine((id) => Object.hasOwn(resultSchemas, id), "unknown result schema"),
   authMode: z.enum(["api-key", "subscription"]),
 }).superRefine((config, ctx) => {
+  for (const rule of config.allow) {
+    const denied = deniedBy(rule);
+    if (denied !== undefined) ctx.addIssue({ code: "custom", path: ["allow"], message: `${rule} would allow ${denied}, which the runner always denies` });
+  }
   // Bash runs only in the build container: the worker holds every factory secret (ADR 0011).
   if (config.runsIn !== "worker") return;
   if (config.tools.some(isBash)) ctx.addIssue({ code: "custom", path: ["tools"], message: "a role that runs in the worker cannot have Bash" });

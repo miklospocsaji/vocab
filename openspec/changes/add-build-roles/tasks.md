@@ -86,3 +86,12 @@ Build step M3.2. Depends on `add-build-gates`. Unit tests run in `pnpm check` wi
   - Recorded 2026-11-12 (`build-e2e.live.test.ts`, local Docker, api-key, the fixture change `add-lookup-counts` with one task on this repo at HEAD): the test author passed the red gate (typecheck, lint, unit, red) in $0.0356, 7 turns, 123.5 s wall; with its patch committed, the implementer passed the green gate (typecheck, lint, unit, spec, coverage) in $0.0348, 5 turns, 117.8 s wall. Total $0.0704. Both installs were offline from the warm store. Wall time includes the clone, the install and the gates; the gates' whole-repo typecheck and lint take most of it. The test author noted that it added no `Lookup` contract because the design lists none.
 - [x] 2.16 Run `pnpm gates coverage --change add-build-roles --tests factory` and record the result.
   - Recorded 2026-11-12: passed. Every one of the change's 22 scenarios has a test under `factory/`.
+
+### Deny list
+
+- [x] 2.17 The runner passes the deny list from `design.md` as `disallowedTools` to every session, and `loadRole` refuses an allowlist that overlaps it. Unit tests, on what the runner sends to the SDK and on configs in a temp dir. Scenarios:
+  - Git push is denied regardless of the allowlist
+  - Allowlist overlapping the deny list is refused
+
+  Then re-run 2.16's coverage check (24 scenarios) and record it under this task.
+  - Done 2026-11-12: `DENY_LIST` in `config.ts`, passed by the runner as `disallowedTools` to every session; the config schema refuses an overlapping allow rule (field `allow`, naming the rule and the denied command). Unit tests in `runner.test.ts` and `config.test.ts`. Coverage re-run: passed, all 24 scenarios have a test under `factory/`. Not checked live: that the CLI lets a deny rule win over a matching allow rule, which the SDK documents.

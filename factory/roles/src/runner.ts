@@ -12,7 +12,7 @@ import { delimiter, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { query as sdkQuery, type Options, type SDKMessage, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { RoleConfigError, writableFor, type Role, type RoleConfig } from "./config.ts";
+import { DENY_LIST, RoleConfigError, writableFor, type Role, type RoleConfig } from "./config.ts";
 import { createPathGuard, createReadGuard } from "./guard.ts";
 import { renderPrompt, type PromptArtifact, type PromptIssue, type RetryEvidence } from "./prompt.ts";
 
@@ -111,6 +111,8 @@ export function createRunner(options: RunnerOptions): RunRole {
         systemPrompt: role.prompt,
         tools: role.tools.filter((tool) => !isAgentTool(tool)),
         allowedTools: role.allow.filter((rule) => !isAgentTool(rule)),
+        // Whatever the allowlist: git push, network and install commands (design.md).
+        disallowedTools: [...DENY_LIST],
         permissionMode: "dontAsk",
         settingSources: ["project"],
         skills: role.skills,

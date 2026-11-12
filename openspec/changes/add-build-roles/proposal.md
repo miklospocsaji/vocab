@@ -23,7 +23,7 @@ This change is build step M3.2: the roles, and the build container they run in, 
 - **The failure classifier:** an Agent SDK session with no tools, a cap of 3 turns and structured output (owner, 2026-11-09), so it runs in both auth modes and is recorded like every other role. The brief's "single Messages API call" is amended. It returns `{ kind, evidence }`, where `kind` is `flaky`, `bug`, `design-flaw`, `spec-ambiguity` or `infra`.
 - **The build container:** a `build` target of the worker Dockerfile, with the dev dependencies and a warm pnpm store. Its entry point, `factory-build <role> --input <key>`, does the following:
   - reads its input from the artifact store and clones the change branch (public, no token)
-  - runs the role with Bash on its allowlist and the sandbox off
+  - runs the role with Bash on its allowlist, a fixed deny list for `git push` and network commands, and the sandbox off
   - runs the diff check, then the gates from `add-build-gates` (red after the test author, green after the implementer)
   - writes `patch.diff`, `gates.json`, `messages.jsonl` and `outcome.json` back to the store
 - **Boundaries for Bash roles:**

@@ -64,7 +64,11 @@ The Bash allowlist of the test author and implementer:
 - `Bash(git status:*)`
 - `Bash(git diff:*)`
 
-There is no install, no `pnpm add`, no network command and no `git push`. The worker roles keep the sandbox options of ADR 0007, so their sessions still need `bubblewrap` in the image. The build roles run with `sandbox: { enabled: false }`, set explicitly.
+There is no install, no `pnpm add`, no network command and no `git push`.
+
+The runner also passes a fixed deny list to every session as SDK `disallowedTools`, whatever the role's allowlist: `Bash(git push:*)`, `Bash(curl:*)`, `Bash(wget:*)`, `Bash(ssh:*)`, `Bash(scp:*)`, `Bash(nc:*)`, `Bash(pnpm add:*)`, `Bash(pnpm install:*)`, `Bash(npm:*)` and `Bash(npx:*)`. Deny rules win over allow rules, and the CLI checks each part of a compound command. `loadRole` refuses a config whose allowlist overlaps the list: a bare `Bash` or `Bash(*)`, a rule for a command a denied rule covers (`Bash(git push:*)`, `Bash(npm install)`), or a prefix rule that a denied command starts with, such as `Bash(git:*)`. The list matches command strings, so it stops the model's own commands, not code they run: see the accepted risks.
+
+The worker roles keep the sandbox options of ADR 0007, so their sessions still need `bubblewrap` in the image. The build roles run with `sandbox: { enabled: false }`, set explicitly.
 
 Result schemas (`factory/artifacts`):
 - `design-result`: `{ summary, contracts: string[], adrNeeded: string[], openQuestions: string[] }`
@@ -141,6 +145,7 @@ The CLI runs the build container with `docker run --rm`, using the locally built
   - In the cloud it is the API key. Limits: the $20 monthly workspace limit, revocation, and the 14-day log retention to spot it.
   - Locally it is the owner's subscription token (owner, 2026-11-09). It has no spend limit of its own and lasts until it expires or is revoked (`claude setup-token` issues a new one).
 - **The build task role's credentials are reachable too, from the ECS credential endpoint.** They allow only reading and writing `work-items/*` in the artifact bucket (`add-build-loop`). The worst case is a forged or overwritten build output. The worker re-checks every patch's paths before committing, and the PR's CI run is an independent check.
+- **The deny list does not stop code that an allowed command runs.** `pnpm exec vitest run` runs the tests the role wrote, and they can open sockets or call `git` directly; a rewritten command (`git -c x=y push`) can slip past the string match too. A push still fails, since the container holds no GitHub credential, and network egress stays uncontrolled, as the first risk above and the ADR 0008 amendment accept. The deny list keeps a future allowlist from granting those commands to the model by mistake.
 - **The gates can be fooled from inside the container.** The implementer's code could tamper with `node_modules` or the Vitest report before the gates run. This is the same risk as in `add-build-gates`. The PR's CI run of `pnpm check` in GitHub Actions does not share the container, and from M4 the reviewer adds a second look.
 
 ## Risks
@@ -156,7 +161,7 @@ No changes in `app/contracts/`.
 
 ## Decisions that need an ADR
 
-- **0011 Bash roles in a build container:** options A, B and C, the decision, the boundaries (`runsIn`, refusing factory credentials, the diff check twice), and the accepted risks.
+- **0011 Bash roles in a build container:** options A, B and C, the decision, the boundaries (`runsIn`, refusing factory credentials, the deny list, the diff check twice), and the accepted risks.
 - **0012 Role prompts outside `.claude/agents`:** options A, B and C, and the decision.
 - **0007 amendment:** the sandbox stays on for worker roles. Bash roles run with it off, in the build container, and the read-only-worktree decision no longer applies to them. The cache question is closed: caches go under git-ignored `node_modules` in the build container's clone.
 - **0008 amendment:** the new accepted risks above, and why there is still no network layer.

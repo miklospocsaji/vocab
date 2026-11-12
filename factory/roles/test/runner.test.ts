@@ -61,6 +61,20 @@ const WORKER_SECRETS = {
   FACTORY_LEDGER_SECRET: JSON.stringify({ host: "ledger.example", port: 5432, username: "factory", password: "ledger-secret-password-value", dbname: "factory" }),
 };
 
+// The deny list of design.md, written out here so the test cannot share the runner's mistake.
+const DENY_LIST = [
+  "Bash(git push:*)",
+  "Bash(curl:*)",
+  "Bash(wget:*)",
+  "Bash(ssh:*)",
+  "Bash(scp:*)",
+  "Bash(nc:*)",
+  "Bash(pnpm add:*)",
+  "Bash(pnpm install:*)",
+  "Bash(npm:*)",
+  "Bash(npx:*)",
+];
+
 let worktree: string;
 
 function sampleRole(overrides: Partial<Role> = {}): Role {
@@ -589,6 +603,21 @@ describe("runRole", () => {
       const result = await run([init(), success(VALID_RESULT)], { role: buildRole(), container: "build" });
       expect(result.outcome).toEqual({ value: VALID_RESULT });
       expect(onlyOptions(result).sandbox).toEqual({ enabled: false });
+    });
+
+    it("Scenario: Git push is denied regardless of the allowlist", async () => {
+      // The runner does not re-check the config, so even an allowlist granting all of Bash gets the deny list.
+      for (const allow of [["Bash(git:*)"], ["Bash"], ["Read"]]) {
+        const options = onlyOptions(await run([init(), success(VALID_RESULT)], { role: buildRole({ allow }), container: "build" }));
+        expect(options.allowedTools, String(allow)).toEqual(allow);
+        expect(options.disallowedTools, String(allow)).toEqual(
+          expect.arrayContaining(DENY_LIST),
+        );
+      }
+    });
+
+    it("passes the deny list to a worker role's session too", async () => {
+      expect(onlyOptions(await run([init(), success(VALID_RESULT)])).disallowedTools).toEqual(expect.arrayContaining(DENY_LIST));
     });
 
     it("keeps ADR 0007's sandbox for a worker role, in either container", async () => {

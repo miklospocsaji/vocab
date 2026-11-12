@@ -1,6 +1,6 @@
 export { createPathGuard, createReadGuard, isWritable } from "./guard.ts";
 export type { PathGuardOptions, ReadGuardOptions } from "./guard.ts";
-export { loadRole, RoleConfigError, RoleConfigSchema, stripFrontmatter, writableFor } from "./config.ts";
+export { DENY_LIST, loadRole, RoleConfigError, RoleConfigSchema, stripFrontmatter, writableFor } from "./config.ts";
 export type { LoadRoleOptions, Role, RoleConfig } from "./config.ts";
 export { renderPrompt, renderTaskPrompt } from "./prompt.ts";
 export type { PromptArtifact, PromptInput, PromptIssue, PromptTask, RetryEvidence, TaskPromptInput } from "./prompt.ts";

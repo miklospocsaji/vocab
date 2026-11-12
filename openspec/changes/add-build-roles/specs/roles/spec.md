@@ -31,6 +31,14 @@ For roles with Bash, the runner SHALL allow only commands matching the role's al
 - **WHEN** a role whose allowlist is `openspec` only runs `curl https://example.com`
 - **THEN** the command does not run and the ledger records the denial
 
+#### Scenario: Git push is denied regardless of the allowlist
+- **WHEN** a role with Bash is run, whatever its allowlist
+- **THEN** the session's denied calls include `Bash(git push:*)` and the network commands of the runner's deny list
+
+#### Scenario: Allowlist overlapping the deny list is refused
+- **WHEN** a role config whose allowlist includes `Bash(git:*)` is loaded
+- **THEN** loading fails, and the error names the role, the rule and the denied command it would allow
+
 #### Scenario: Worker roles have no Bash
 - **WHEN** the config of any role with `runsIn: worker` is loaded
 - **THEN** Bash is not among its tools, and no `Bash` rule is in its pre-approved calls

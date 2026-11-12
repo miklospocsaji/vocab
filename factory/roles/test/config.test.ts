@@ -119,6 +119,40 @@ describe("loadRole", () => {
     writeRole({ ...validConfig, allow: [...validConfig.allow, "Bash(pnpm lint)"] });
     await expect(loadRole(ROLE, { root })).rejects.toMatchObject({ name: "RoleConfigError", role: ROLE, field: "allow" });
   });
+
+  describe("the runner's deny list", () => {
+    const buildConfig = (allow: string[]) => ({ ...validConfig, runsIn: "build", tools: [...validConfig.tools, "Bash"], allow: [...validConfig.allow, ...allow] });
+
+    it("Scenario: Allowlist overlapping the deny list is refused", async () => {
+      writeRole(buildConfig(["Bash(pnpm lint)", "Bash(git:*)"]));
+      const load = loadRole(ROLE, { root });
+      await expect(load).rejects.toMatchObject({ name: "RoleConfigError", role: ROLE, field: "allow" });
+      await expect(loadRole(ROLE, { root })).rejects.toThrow(ROLE);
+      await expect(loadRole(ROLE, { root })).rejects.toThrow("Bash(git:*)");
+      await expect(loadRole(ROLE, { root })).rejects.toThrow("git push");
+    });
+
+    it("refuses a bare Bash, Bash(*), a denied rule and a prefix rule that covers a denied command", async () => {
+      for (const [rule, denied] of [
+        ["Bash", "git push"],
+        ["Bash(*)", "git push"],
+        ["Bash(curl:*)", "curl"],
+        ["Bash(git push:*)", "git push"],
+        ["Bash(pnpm:*)", "pnpm add"],
+        ["Bash(n:*)", "nc"],
+      ] as const) {
+        writeRole(buildConfig([rule]));
+        await expect(loadRole(ROLE, { root }), rule).rejects.toMatchObject({ name: "RoleConfigError", role: ROLE, field: "allow" });
+        await expect(loadRole(ROLE, { root }), rule).rejects.toThrow(denied);
+      }
+    });
+
+    // Control: the build roles' own allowlist loads, so the check is not a blanket refusal of Bash.
+    it("loads an allowlist that no denied command falls under", async () => {
+      writeRole(buildConfig(["Bash(pnpm typecheck)", "Bash(pnpm lint)", "Bash(pnpm exec vitest run:*)", "Bash(git status:*)", "Bash(git diff:*)"]));
+      expect((await loadRole(ROLE, { root })).allow).toContain("Bash(git diff:*)");
+    });
+  });
 });
 
 describe("the repository's roles", () => {
