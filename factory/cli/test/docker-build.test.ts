@@ -1,7 +1,7 @@
 // The Docker build runner of local runs (add-build-loop task 3.11), with a fake exec.
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { nextBuildKey } from "@vocab/factory-orchestrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FsStore } from "../../worker/src/store.ts";
@@ -74,6 +74,26 @@ describe("dockerBuildRunner", () => {
     await dockerBuildRunner({ storeDir: root, env: { CLAUDE_CODE_OAUTH_TOKEN: TOKEN }, exec })({ changeId: CHANGE_ID, taskId: "1.1" });
 
     expect(calls[0]?.args.slice(-5)).toEqual(["implementer", "--input", rerun, "--patch", patch]);
+  });
+
+  it("makes the attempt's folder writable for the container's user, and nothing above it", async () => {
+    await store.put(INPUT, "{}");
+    await store.put(nextBuildKey(CHANGE_ID, "1.1"), JSON.stringify({ role: "implementer", mode: "session", input: INPUT }));
+    const { exec } = recordingExec();
+
+    await dockerBuildRunner({ storeDir: root, env: { CLAUDE_CODE_OAUTH_TOKEN: TOKEN }, exec })({ changeId: CHANGE_ID, taskId: "1.1" });
+
+    // The build image runs as its own user, so it writes its outputs into a folder the owner owns.
+    expect(statSync(join(root, dirname(INPUT))).mode & 0o777).toBe(0o777);
+    expect(statSync(join(root, dirname(dirname(INPUT)))).mode & 0o002).toBe(0);
+  });
+
+  it("refuses a next build whose input key leaves the store", async () => {
+    await store.put(nextBuildKey(CHANGE_ID, "1.1"), JSON.stringify({ role: "implementer", mode: "session", input: "work-items/../../etc/input.json" }));
+    const { exec, calls } = recordingExec();
+
+    await expect(dockerBuildRunner({ storeDir: root, env: { CLAUDE_CODE_OAUTH_TOKEN: TOKEN }, exec })({ changeId: CHANGE_ID, taskId: "1.1" })).rejects.toThrow();
+    expect(calls).toEqual([]);
   });
 
   it("refuses a task with no next build", async () => {

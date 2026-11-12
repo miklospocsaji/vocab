@@ -5,11 +5,17 @@
  * `docker` gets only the variables it needs to run, and the model credential, which it passes on
  * by name: the token never appears on the command line, and nothing else of the factory's
  * (the ledger URL, GitHub tokens) reaches the container.
+ *
+ * The image runs as its own user (uid 10001), not the owner's, so the attempt's folder (and only
+ * it) is made writable for it before the run. The build writes only files there, never folders,
+ * so the owner can still read and remove everything it wrote.
  */
 import { execFile } from "node:child_process";
+import { chmod, mkdir } from "node:fs/promises";
+import { join, posix } from "node:path";
 import { promisify } from "node:util";
 import { nextBuildKey, parseNextBuild, type RunBuild } from "@vocab/factory-orchestrator";
-import { FsStore } from "@vocab/factory-worker/store";
+import { checkKey, FsStore } from "@vocab/factory-worker/store";
 
 /** The tag of the locally built `build` target. */
 export const LOCAL_BUILD_IMAGE = "vocab-factory-build:local";
@@ -51,6 +57,12 @@ export function dockerBuildRunner(options: DockerBuildOptions): RunBuild {
     const next = parseNextBuild(await store.get(key));
     const token = env[MODEL_CREDENTIAL];
     if (token === undefined || token === "") throw new Error(`${MODEL_CREDENTIAL} is not set; add it to .env.local (ADR 0006)`);
+
+    checkKey(next.input);
+    if (next.patch !== undefined) checkKey(next.patch);
+    const attemptDir = join(storeDir, posix.dirname(next.input));
+    await mkdir(attemptDir, { recursive: true });
+    await chmod(attemptDir, 0o777);
 
     const dockerEnv: Record<string, string | undefined> = { [MODEL_CREDENTIAL]: token };
     for (const name of DOCKER_ENV) if (env[name] !== undefined) dockerEnv[name] = env[name];
