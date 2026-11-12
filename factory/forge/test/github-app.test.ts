@@ -115,7 +115,7 @@ describe("createInstallationTokenProvider", () => {
     expect(api.requests.map((r) => `${r.method} ${r.path}`)).toEqual([`POST ${TOKEN_PATH}`]);
     expect(api.requests[0]?.body).toEqual({
       repositories: [REPO],
-      permissions: { contents: "write", issues: "write", metadata: "read" },
+      permissions: { contents: "write", issues: "write", pull_requests: "write", metadata: "read" },
     });
 
     // A JWT for the App: RS256, signed with its key, issued by its id, valid for at most 10 minutes.
@@ -200,6 +200,7 @@ describeForgeContract("GitHubForge with a GitHub App token provider", () => {
     setBranch: (branch, sha) => api.branches.set(branch, sha),
     comments: (n) => api.comments.get(n) ?? [],
     branchSha: (branch) => api.branches.get(branch),
+    pullRequests: () => api.pullRequests.map(({ head, base, title, body }) => ({ head, base, title, body })),
   };
 });
 

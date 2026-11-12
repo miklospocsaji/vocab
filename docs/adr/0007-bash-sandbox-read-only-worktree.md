@@ -1,6 +1,6 @@
 # 0007 Bash sandbox: read-only worktree
 
-Status: accepted (2026-10-27); amended 2026-10-31 (`autoAllowBashIfSandboxed`) and 2026-11-04 (containers)
+Status: accepted (2026-10-27); amended 2026-10-31 (`autoAllowBashIfSandboxed`), 2026-11-04 (containers) and 2026-11-09 (Bash roles in the build container)
 
 ## Context
 
@@ -47,3 +47,13 @@ The M2 spike (`add-factory-worker` design, SDK 0.3.310) ran the sandbox in a con
 Decision (owner, 2026-11-04): the proposal author has no Bash, locally or in the worker. The runner validates its change after the session. The sandbox options stay in the runner for any role with Bash, and on a host without sandbox support those roles' commands fail.
 
 M3's test author and implementer need Bash, so M3 must decide how they run code. The cache question above is part of that decision.
+
+## Amendment 2026-11-09: Bash roles in the build container
+
+M3 decided how its Bash roles run (ADR 0011, owner decision of 2026-11-08).
+
+- **Worker roles keep this ADR's sandbox options.** Every role with `runsIn: worker` gets the options above, and has no Bash. The sandbox stays on for them so that the SDK's options are the same as in M2, and the image keeps `bubblewrap` and `socat` (ADR 0010).
+- **Build roles run with `sandbox: { enabled: false }`, set explicitly,** in the build container. The read-only-worktree decision no longer applies to them: Bash may write anywhere in their clone. Their write boundary is the diff check, run after the session in the build container and again in the worker on the patch's paths (ADR 0011). Edit and Write stay under the path guard, so a direct write outside the role's globs is still denied at the call.
+- **The `allowedTools` Bash rules still decide which commands run.** With the sandbox off there is no `autoAllowBashIfSandboxed` to bypass them; under `permissionMode: "dontAsk"`, a command no rule matches is denied. The live test "Non-allowlisted command is denied" runs again in the build container, with a compound command (`pnpm lint && curl https://example.com`) as a new case.
+- **The cache question is closed.** Vitest, Vite and TypeScript caches go under the git-ignored `node_modules/` of the build container's clone. Ignored files never reach the diff check or the patch.
+- The live tests "Bash cannot write outside the role's paths" and "Missing sandbox blocks Bash" are retired with the scenarios they proved (`add-build-roles`).

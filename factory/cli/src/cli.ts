@@ -1,17 +1,18 @@
 /**
  * The factory CLI, with its dependencies passed in so tests can drive it:
- * - `run --issue <n> --until proposal`
+ * - `run --issue <n> --until proposal|design|plan|pr`
+ * - `approve --issue <n>`: the owner's approval of a local run, which has no `/approve` comment
  * - `cost --issue <n>`
  * `main.ts` wires in the real ledger, GitHub and Agent SDK.
  */
 import { parseArgs } from "node:util";
 import { findWorkItemByIssue, listAttempts, listAttemptUsage, type AttemptRow, type AttemptUsage, type Db, type WorkItemRow } from "@vocab/factory-ledger";
-import { isRunUntil, RUN_UNTIL, runWorkItem, type ProposalContext } from "@vocab/factory-orchestrator";
+import { approveLocally, isRunUntil, RUN_UNTIL, runWorkItem, type RunContext } from "@vocab/factory-orchestrator";
 
 /** Exit codes of the CLI. */
 export const EXIT_CODES = {
   ok: 0,
-  /** The work item was rejected or is escalated, or `cost` found no work item. */
+  /** The work item was rejected or is escalated, `approve` found nothing awaiting, or `cost` found no work item. */
   failed: 1,
   /** The command line was invalid. */
   usage: 2,
@@ -25,13 +26,14 @@ export interface CliEnv {
   out: (text: string) => void;
   /** Receives everything the CLI prints to stderr. */
   err: (text: string) => void;
-  /** What `run` needs besides the ledger. Only `run` calls it, so `cost` needs no GitHub token. */
-  runContext: () => Promise<Omit<ProposalContext, "db">>;
+  /** What `run` and `approve` need besides the ledger. Only they call it, so `cost` needs no GitHub token. */
+  runContext: () => Promise<Omit<RunContext, "db">>;
 }
 
 export const USAGE = [
   "Usage:",
   `  pnpm factory run --issue <n> --until <${RUN_UNTIL.join("|")}>`,
+  "  pnpm factory approve --issue <n>",
   "  pnpm factory cost --issue <n>",
   "",
 ].join("\n");
@@ -48,10 +50,23 @@ export async function runCli(argv: string[], env: CliEnv): Promise<number> {
     env.err(`factory: ${error.message}\n\n${USAGE}`);
     return EXIT_CODES.usage;
   }
-  return command.name === "run" ? run(command, env) : cost(command, env);
+  switch (command.name) {
+    case "run":
+      return run(command, env);
+    case "approve":
+      return approve(command, env);
+    case "cost":
+      return cost(command, env);
+  }
 }
 
-type Command = { name: "run"; issueNumber: number; until: (typeof RUN_UNTIL)[number] } | { name: "cost"; issueNumber: number };
+type Command = { name: "run"; issueNumber: number; until: (typeof RUN_UNTIL)[number] } | { name: "approve"; issueNumber: number } | { name: "cost"; issueNumber: number };
+
+const COMMANDS = ["run", "approve", "cost"] as const;
+
+function isCommand(name: string | undefined): name is (typeof COMMANDS)[number] {
+  return (COMMANDS as readonly (string | undefined)[]).includes(name);
+}
 
 function parseCommand(argv: string[]): Command {
   const { positionals, values } = parseArgs({
@@ -62,15 +77,15 @@ function parseCommand(argv: string[]): Command {
   });
   const [name, ...rest] = positionals;
   if (rest.length > 0) throw new UsageError(`unexpected argument ${rest[0] ?? ""}`);
-  if (name !== "run" && name !== "cost") throw new UsageError(name === undefined ? "no command given" : `unknown command ${name}`);
+  if (!isCommand(name)) throw new UsageError(name === undefined ? "no command given" : `unknown command ${name}`);
 
   const issueNumber = Number(values.issue);
   if (values.issue === undefined || !/^[1-9][0-9]*$/.test(values.issue) || !Number.isSafeInteger(issueNumber)) {
     throw new UsageError("--issue must be an issue number");
   }
 
-  if (name === "cost") {
-    if (values.until !== undefined) throw new UsageError("cost takes no --until");
+  if (name !== "run") {
+    if (values.until !== undefined) throw new UsageError(`${name} takes no --until`);
     return { name, issueNumber };
   }
   if (values.until === undefined || !isRunUntil(values.until)) {
@@ -90,13 +105,19 @@ async function run(command: Extract<Command, { name: "run" }>, env: CliEnv): Pro
   const ctx = { ...(await env.runContext()), db: env.db };
   const outcome = await runWorkItem(ctx, { issueNumber: command.issueNumber, until: command.until });
   switch (outcome.kind) {
-    case "stopped":
-      env.out(
+    case "stopped": {
+      const lines = [
         outcome.advanced
-          ? `${describe(outcome.workItem)} is now ${outcome.workItem.state}.\n`
-          : `Nothing to do: ${describe(outcome.workItem)} is already ${outcome.workItem.state}. No agent ran.\n`,
-      );
+          ? `${describe(outcome.workItem)} is now ${outcome.workItem.state}.`
+          : `Nothing to do: ${describe(outcome.workItem)} is already ${outcome.workItem.state}. No agent ran.`,
+      ];
+      if (outcome.awaiting !== undefined) {
+        lines.push(`The ${outcome.awaiting} awaits your approval. Review it, then run: pnpm factory approve --issue ${String(command.issueNumber)}`);
+      }
+      if (outcome.pullRequestUrl !== undefined) lines.push(`Pull request: ${outcome.pullRequestUrl}`);
+      env.out(`${lines.join("\n")}\n`);
       return EXIT_CODES.ok;
+    }
     case "rejected":
       env.err(`factory: issue #${String(command.issueNumber)} was rejected: ${outcome.reason}\n`);
       return EXIT_CODES.failed;
@@ -106,6 +127,26 @@ async function run(command: Extract<Command, { name: "run" }>, env: CliEnv): Pro
           ? `factory: ${describe(outcome.workItem)} is escalated: ${outcome.reason}\n`
           : `factory: ${describe(outcome.workItem)} is escalated and waits for the owner. No agent ran.\n`,
       );
+      return EXIT_CODES.failed;
+  }
+}
+
+async function approve(command: Extract<Command, { name: "approve" }>, env: CliEnv): Promise<number> {
+  const ctx = { ...(await env.runContext()), db: env.db };
+  const outcome = await approveLocally(ctx, command.issueNumber);
+  switch (outcome.kind) {
+    case "approved":
+      env.out(`Approved the ${outcome.approval} of ${describe(outcome.workItem)}. It is now ${outcome.workItem.state}; continue with: pnpm factory run --issue ${String(command.issueNumber)} --until pr\n`);
+      return EXIT_CODES.ok;
+    case "nothing-awaits":
+      env.err(
+        outcome.workItem === undefined
+          ? `factory: nothing awaits approval: issue #${String(command.issueNumber)} has no work item\n`
+          : `factory: nothing awaits approval: ${describe(outcome.workItem)} is ${outcome.workItem.state}\n`,
+      );
+      return EXIT_CODES.failed;
+    case "escalated":
+      env.err(`factory: ${describe(outcome.workItem)} is escalated: ${outcome.reason}\n`);
       return EXIT_CODES.failed;
   }
 }

@@ -1,0 +1,32 @@
+# The test author (brief, section 4): writes one task's failing tests, and stubs the task's new
+# source files so the tests fail at run time, never at load. The red gate checks its outcome.
+name: test-author
+model: claude-sonnet-5-5
+# Has Bash, so it runs only in the build container, with the sandbox off; its write boundary is
+# the diff check after the session (ADR 0011).
+runsIn: build
+tools: [Read, Grep, Glob, Edit, Write, Bash]
+# No install, no pnpm add, no network command and no git push. The runner denies git push and
+# network commands whatever this list says.
+allow:
+  - Read
+  - Grep
+  - Glob
+  - Edit
+  - Write
+  - Bash(pnpm typecheck)
+  - Bash(pnpm lint)
+  - Bash(pnpm exec vitest run:*)
+  - Bash(git status:*)
+  - Bash(git diff:*)
+# {taskStubs}: the task's source files that did not exist at the starting commit, filled per
+# attempt. The diff check fails an attempt that modified one instead of adding it.
+writable:
+  - app/*/test/**
+  - app/e2e/**
+  - "{taskStubs}"
+skills: []
+maxTurns: 40
+maxBudgetUsd: 1
+resultSchema: test-result
+authMode: subscription

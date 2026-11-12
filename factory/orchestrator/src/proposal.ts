@@ -6,11 +6,12 @@
  * `auth-mode-mismatch` (ADR 0006), the work item escalates and the issue gets a comment.
  */
 import { execFile } from "node:child_process";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { delimiter, dirname, join, relative, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { closeAttempt, listAttempts, openAttempt, setWorkItemState, type AttemptRow, type WorkItemRow } from "@vocab/factory-ledger";
-import { AttemptFailed, type PromptArtifact, type RetryEvidence, type Role, type RunRole, type WorkItem } from "@vocab/factory-roles";
+import { AttemptFailed, type RetryEvidence, type Role, type RunRole, type WorkItem } from "@vocab/factory-roles";
+import { changeFiles, currentSpecs, exists } from "./change-files.ts";
+import { renderEvidence } from "./evidence.ts";
 import { commitChange, ensureWorktree, type GitIdentity } from "./git.ts";
 import type { HandlerContext, Transition, WorkItemState } from "./handler.ts";
 
@@ -122,86 +123,6 @@ async function scaffold(worktree: string, changeId: string): Promise<void> {
   await run(OPENSPEC, ["new", "change", changeId], { cwd: worktree, env });
 }
 
-/** Every file in the change folder, paths relative to the worktree, sorted. */
-async function changeFiles(worktree: string, changeId: string): Promise<PromptArtifact[]> {
-  const folder = join(worktree, "openspec/changes", changeId);
-  const entries = await readdir(folder, { recursive: true, withFileTypes: true });
-  const paths = entries.filter((entry) => entry.isFile()).map((entry) => join(entry.parentPath, entry.name));
-  return artifacts(worktree, paths);
-}
-
-/**
- * The current `openspec/specs/<capability>/spec.md` files. The proposal author decides which
- * capabilities a change affects, so it gets all of them.
- */
-async function currentSpecs(worktree: string): Promise<PromptArtifact[]> {
-  const specs = join(worktree, "openspec/specs");
-  if (!(await exists(specs))) return [];
-  const capabilities = await readdir(specs, { withFileTypes: true });
-  const paths = capabilities.filter((entry) => entry.isDirectory()).map((entry) => join(specs, entry.name, "spec.md"));
-  const present = await Promise.all(paths.map(async (path) => ((await exists(path)) ? [path] : [])));
-  return artifacts(worktree, present.flat());
-}
-
-async function artifacts(worktree: string, paths: string[]): Promise<PromptArtifact[]> {
-  const sorted = paths.map((path) => relative(worktree, path)).sort();
-  return Promise.all(sorted.map(async (path) => ({ path, content: await readFile(join(worktree, path), "utf8") })));
-}
-
 function isOpen(attempt: AttemptRow): boolean {
   return attempt.endedAt === null;
-}
-
-async function exists(path: string): Promise<boolean> {
-  return stat(path).then(
-    () => true,
-    () => false,
-  );
-}
-
-/**
- * An `openspec validate --json` report as a list of its issues; any other evidence as it is,
- * fenced.
- */
-function renderEvidence(evidence: string): string {
-  const issues = validationIssues(evidence);
-  if (issues === undefined || issues.length === 0) return fence(evidence);
-  return issues.map((issue) => `- ${issue.level} \`${issue.path}\`: ${issue.message}`).join("\n");
-}
-
-interface ValidationIssue {
-  level: string;
-  path: string;
-  message: string;
-}
-
-function validationIssues(evidence: string): ValidationIssue[] | undefined {
-  let report: unknown;
-  try {
-    report = JSON.parse(evidence);
-  } catch {
-    return undefined;
-  }
-  const items = (report as { items?: unknown } | null)?.items;
-  if (!Array.isArray(items)) return undefined;
-  const issues: ValidationIssue[] = [];
-  for (const item of items as { issues?: unknown }[]) {
-    if (!Array.isArray(item.issues)) return undefined;
-    for (const issue of item.issues as Partial<Record<keyof ValidationIssue, unknown>>[]) {
-      if (typeof issue.message !== "string") return undefined;
-      issues.push({
-        level: typeof issue.level === "string" ? issue.level : "ERROR",
-        path: typeof issue.path === "string" ? issue.path : "",
-        message: issue.message,
-      });
-    }
-  }
-  return issues;
-}
-
-/** A backtick fence longer than any backtick run in the content, so the content cannot close it. */
-function fence(content: string): string {
-  const longest = Math.max(0, ...Array.from(content.matchAll(/`+/g), (match) => match[0].length));
-  const ticks = "`".repeat(Math.max(3, longest + 1));
-  return `${ticks}\n${content.replace(/\n+$/, "")}\n${ticks}`;
 }

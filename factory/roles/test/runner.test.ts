@@ -17,7 +17,7 @@ import type {
 } from "@anthropic-ai/claude-agent-sdk";
 import { ProposalResult } from "@vocab/factory-artifacts";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { Role } from "../src/config.ts";
+import { RoleConfigError, type Role } from "../src/config.ts";
 import { renderPrompt, type RetryEvidence } from "../src/prompt.ts";
 import { AttemptFailed, createRunner, type QueryFn, type Recorder, type WorkItem } from "../src/runner.ts";
 
@@ -61,12 +61,27 @@ const WORKER_SECRETS = {
   FACTORY_LEDGER_SECRET: JSON.stringify({ host: "ledger.example", port: 5432, username: "factory", password: "ledger-secret-password-value", dbname: "factory" }),
 };
 
+// The deny list of design.md, written out here so the test cannot share the runner's mistake.
+const DENY_LIST = [
+  "Bash(git push:*)",
+  "Bash(curl:*)",
+  "Bash(wget:*)",
+  "Bash(ssh:*)",
+  "Bash(scp:*)",
+  "Bash(nc:*)",
+  "Bash(pnpm add:*)",
+  "Bash(pnpm install:*)",
+  "Bash(npm:*)",
+  "Bash(npx:*)",
+];
+
 let worktree: string;
 
 function sampleRole(overrides: Partial<Role> = {}): Role {
   return {
     name: "sample-role",
     model: MODEL,
+    runsIn: "worker",
     tools: ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
     allow: ["Read", "Grep", "Glob", "Bash(openspec validate:*)"],
     writable: ["openspec/changes/{changeId}/proposal.md", "openspec/changes/{changeId}/specs/**/spec.md"],
@@ -245,6 +260,8 @@ interface RunInput {
   role?: Role;
   evidence?: RetryEvidence;
   env?: Record<string, string | undefined>;
+  container?: "worker" | "build";
+  item?: Partial<WorkItem>;
 }
 
 /** Runs the role against a stubbed `query` that yields `steps` in order, throwing at an Error. */
@@ -263,10 +280,10 @@ async function run(steps: (SDKMessage | Error)[], input: RunInput = {}): Promise
     })();
   };
   const recorder = new MemoryRecorder();
-  const runRole = createRunner({ query, recorder, env: input.env ?? PARENT_ENV });
+  const runRole = createRunner({ query, recorder, env: input.env ?? PARENT_ENV, ...(input.container === undefined ? {} : { container: input.container }) });
   let outcome: Outcome;
   try {
-    outcome = { value: await runRole(input.role ?? sampleRole(), workItem(), input.evidence) };
+    outcome = { value: await runRole(input.role ?? sampleRole(), { ...workItem(), ...input.item }, input.evidence) };
   } catch (error) {
     outcome = { error };
   }
@@ -561,6 +578,98 @@ describe("runRole", () => {
       expect(error.evidence).toContain("FACTORY_AUTH_MODE");
       expect(result.calls).toEqual([]);
       expect(result.recorder.entries).toEqual([]);
+    });
+  });
+
+  describe("where the role runs (ADR 0011)", () => {
+    const buildRole = (overrides: Partial<Role> = {}) => sampleRole({ name: "implementer", runsIn: "build", ...overrides });
+
+    it("Scenario: Worker refuses a build role", async () => {
+      for (const container of [undefined, "worker"] as const) {
+        const result = await run([init(), success(VALID_RESULT)], { role: buildRole(), ...(container === undefined ? {} : { container }) });
+        expect(result.outcome).toHaveProperty("error");
+        const error = "error" in result.outcome ? result.outcome.error : undefined;
+        expect(error).toBeInstanceOf(RoleConfigError);
+        expect(error).toMatchObject({ role: "implementer", field: "runsIn" });
+        expect(String(error)).toContain("implementer");
+        expect(String(error)).toContain("only in the build container");
+        // No session starts.
+        expect(result.calls).toEqual([]);
+        expect(result.recorder.entries).toEqual([]);
+      }
+    });
+
+    it("runs a build role in the build container with the sandbox off, set explicitly", async () => {
+      const result = await run([init(), success(VALID_RESULT)], { role: buildRole(), container: "build" });
+      expect(result.outcome).toEqual({ value: VALID_RESULT });
+      expect(onlyOptions(result).sandbox).toEqual({ enabled: false });
+    });
+
+    it("Scenario: Git push is denied regardless of the allowlist", async () => {
+      // The runner does not re-check the config, so even an allowlist granting all of Bash gets the deny list.
+      for (const allow of [["Bash(git:*)"], ["Bash"], ["Read"]]) {
+        const options = onlyOptions(await run([init(), success(VALID_RESULT)], { role: buildRole({ allow }), container: "build" }));
+        expect(options.allowedTools, String(allow)).toEqual(allow);
+        expect(options.disallowedTools, String(allow)).toEqual(
+          expect.arrayContaining(DENY_LIST),
+        );
+      }
+    });
+
+    it("passes the deny list to a worker role's session too", async () => {
+      expect(onlyOptions(await run([init(), success(VALID_RESULT)])).disallowedTools).toEqual(expect.arrayContaining(DENY_LIST));
+    });
+
+    it("keeps ADR 0007's sandbox for a worker role, in either container", async () => {
+      for (const container of ["worker", "build"] as const) {
+        const options = onlyOptions(await run([init(), success(VALID_RESULT)], { container }));
+        expect(options.sandbox).toMatchObject({
+          enabled: true,
+          failIfUnavailable: true,
+          autoAllowBashIfSandboxed: false,
+          allowUnsandboxedCommands: false,
+          filesystem: { denyWrite: [worktree] },
+        });
+      }
+    });
+
+    it("fills {taskStubs} in the path guard's globs with the work item's stubs", async () => {
+      const role = buildRole({ writable: ["app/*/test/**", "{taskStubs}"] });
+      const options = onlyOptions(await run([init(), success(VALID_RESULT)], { role, container: "build", item: { taskStubs: ["app/domain/src/lemma.ts"] } }));
+      const hook = (options.hooks?.PreToolUse ?? []).find((entry) => entry.matcher === "Edit|Write|NotebookEdit")?.hooks[0];
+      if (hook === undefined) throw new Error("no path guard hooked");
+      const attempt = async (filePath: string) =>
+        hookDecision(
+          await hook(
+            {
+              hook_event_name: "PreToolUse",
+              session_id: SESSION,
+              transcript_path: join(worktree, "transcript.jsonl"),
+              cwd: worktree,
+              tool_name: "Write",
+              tool_input: { file_path: filePath, content: "x" },
+              tool_use_id: "toolu_1",
+            },
+            "toolu_1",
+            { signal: new AbortController().signal },
+          ),
+        ).decision;
+      expect(await attempt("app/domain/src/lemma.ts")).toBeUndefined();
+      expect(await attempt("app/domain/src/word.ts")).toBe("deny");
+    });
+  });
+
+  describe("prompts the caller renders", () => {
+    it("sends the work item's prompt as it is, when it has one", async () => {
+      const result = await run([init(), success(VALID_RESULT)], { item: { prompt: "Classify this failure." } });
+      expect(result.calls[0]?.prompt).toBe("Classify this failure.");
+    });
+
+    it("skips the change validation for a role that writes nothing", async () => {
+      // An invalid change: a role with writable paths fails on it (see invalid-change above).
+      rmSync(join(worktree, CHANGE, "specs"), { recursive: true });
+      const role = sampleRole({ tools: [], allow: [], writable: [] });
+      expect((await run([init(), success(VALID_RESULT)], { role })).outcome).toEqual({ value: VALID_RESULT });
     });
   });
 

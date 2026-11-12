@@ -12,7 +12,8 @@ Kindle Vocab Software Factory. `docs/brief.md` is the source of truth; decisions
 - `pnpm test:docker`: tests that build and run the worker image (`*.docker.test.ts`); never in `pnpm check` or CI. Needs Docker
 - `pnpm test:cloud`: tests against the deployed `Factory` stack (`*.cloud.test.ts`), with `AWS_PROFILE=vocab`; never in `pnpm check` or CI. The boundary test spends under a cent of model budget
 - `pnpm infra:synth` / `pnpm infra:diff` / `pnpm infra:deploy`: the factory's CDK stack in eu-central-1, with `AWS_PROFILE=vocab`. Each needs `-c budgetEmail=<address>`, which is never committed. Ask the owner before every deploy. Run them through these scripts, not a bare `cdk`, so the webhook's esbuild bundling finds `infra`'s esbuild. A diff after any edit under `factory/` shows new images, since tests are in the image's build context
-- `pnpm factory run --issue <n> --until proposal`: runs the factory locally against a GitHub issue (pushes a change branch, comments on the issue). Needs `gh auth login` and `CLAUDE_CODE_OAUTH_TOKEN` in the git-ignored `.env.local` (ADR 0006)
+- `pnpm factory run --issue <n> --until proposal|design|plan|pr`: runs the factory locally against a GitHub issue (pushes a change branch, comments on the issue; `pr` builds the tasks in the local `vocab-factory-build:local` image and opens a pull request). It stops at every approval. Needs `gh auth login` and `CLAUDE_CODE_OAUTH_TOKEN` in the git-ignored `.env.local` (ADR 0006)
+- `pnpm factory approve --issue <n>`: approves the proposal or design a local run stopped at
 - `pnpm factory cost --issue <n>`: the work item's tokens, auth mode and estimated cost per attempt and in total, from the local ledger only
 - `pnpm exec openspec <cmd>`: the pinned OpenSpec CLI (`list`, `show <id>`, `validate <id> --strict`, `archive <id> --yes`)
 

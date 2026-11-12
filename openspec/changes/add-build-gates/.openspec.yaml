@@ -1,0 +1,5 @@
+schema: spec-driven
+created: 2026-11-08
+goal: "M3.1: deterministic gates for one build task (red check, green gates,
+  scenario coverage) that report gates.json"
+x-complexity: medium

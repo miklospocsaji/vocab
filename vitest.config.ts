@@ -10,7 +10,8 @@ export default defineConfig({
         test: {
           name: "unit",
           include: tests.map((dir) => `${dir}.test.ts`),
-          exclude: ["**/node_modules/**", "**/*.live.test.ts", "**/*.docker.test.ts", "**/*.container.test.ts", "**/*.cloud.test.ts"],
+          // The gates' fixture worktrees hold tests of their own, which the gates tests run in a copy.
+          exclude: ["**/node_modules/**", "**/*.live.test.ts", "**/*.docker.test.ts", "**/*.container.test.ts", "**/*.cloud.test.ts", "factory/gates/test/fixtures/**"],
         },
       },
       {

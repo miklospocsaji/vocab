@@ -1,0 +1,15 @@
+# The design reviewer (brief, section 4): checks design.md against the delta specs, the current
+# specs and the contracts. It only reads, and starts with no other session's transcript.
+name: design-reviewer
+model: claude-sonnet-5-5
+# No Bash, so it runs in the worker (ADR 0011).
+runsIn: worker
+tools: [Read, Grep, Glob]
+allow: [Read, Grep, Glob]
+# Read-only: the runner skips openspec validate for a role with no writable paths.
+writable: []
+skills: []
+maxTurns: 20
+maxBudgetUsd: 0.5
+resultSchema: review-result
+authMode: subscription

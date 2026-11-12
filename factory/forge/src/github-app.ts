@@ -27,7 +27,7 @@ export interface InstallationTokenProviderOptions {
 }
 
 /** ADR 0009: exactly these, and pull requests join in M3. */
-const PERMISSIONS = { contents: "write", issues: "write", metadata: "read" } as const;
+const PERMISSIONS = { contents: "write", issues: "write", pull_requests: "write", metadata: "read" } as const;
 /** A token is replaced once less than this is left of it. */
 const REFRESH_MARGIN_MS = 5 * 60_000;
 /** GitHub allows up to 10 minutes; `iat` is backdated for clock drift, as GitHub recommends. */

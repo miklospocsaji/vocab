@@ -25,6 +25,20 @@ export interface PushBranchOptions {
   branch: string;
 }
 
+export interface NewPullRequest {
+  /** The branch to merge, in the forge's repository. */
+  head: string;
+  /** The branch to merge into. */
+  base: string;
+  title: string;
+  body: string;
+}
+
+export interface PullRequest extends NewPullRequest {
+  number: number;
+  url: string;
+}
+
 export interface Forge {
   /** Rejects with a `not-found` ForgeError when there is no such issue. */
   getIssue(issueNumber: number): Promise<Issue>;
@@ -39,6 +53,10 @@ export interface Forge {
    * The clone's `origin` is the repository, and no credential is stored in the clone.
    */
   clone(directory: string): Promise<void>;
+  /** Opens a pull request; rejects with a ForgeError if one is open for `head` already, or `head` does not exist. */
+  openPullRequest(request: NewPullRequest): Promise<PullRequest>;
+  /** The open pull request from `head`, if there is one. */
+  findPullRequest(head: string): Promise<PullRequest | undefined>;
 }
 
 export type ForgeErrorKind = "not-found" | "unauthorized" | "failed";

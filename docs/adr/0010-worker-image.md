@@ -1,6 +1,6 @@
 # 0010 Worker image
 
-Status: accepted (2026-11-04; owner decision on Bash of 2026-11-04); amended 2026-11-06 (boundary-check image)
+Status: accepted (2026-11-04; owner decision on Bash of 2026-11-04); amended 2026-11-06 (boundary-check image) and 2026-11-09 (build target, prompts)
 
 ## Context
 
@@ -12,7 +12,7 @@ From M2, every state runs as a Fargate task from one `factory-worker` image (bri
 - Platform `linux/amd64`, matching the owner's machine, so the image builds natively and local checks run on the same platform as Fargate.
 - Contents:
   - `git`, `ca-certificates`, `bubblewrap` and `socat` from Debian
-  - the factory's code in its workspace layout: root manifests, `factory/*`, `.claude/agents`, `openspec/config.yaml`
+  - the factory's code in its workspace layout: root manifests, `factory/*`, `.claude/agents` (until 2026-11-09; the prompts are under `factory/roles/` since, ADR 0012), `openspec/config.yaml`
   - production dependencies installed with `pnpm install --frozen-lockfile --prod`, plus the pinned OpenSpec CLI
   - the RDS CA bundle
 - `bubblewrap` and `socat`, although no role in the image uses Bash (amended 2026-11-06, owner decision). The runner requires the sandbox for every role (ADR 0007). Without these binaries the SDK refuses to start any session, so the proposal author could not run. With them, sessions start, and every Bash command fails, because the sandbox cannot create its namespaces in a container with no added privileges. No Playwright until M4.
@@ -46,3 +46,17 @@ The scenario "Boundaries hold in Fargate" runs the live boundary tests in a Farg
   - The local container check (`container.live.test.ts`) builds the same target, which replaces `live-check.Dockerfile`.
 - What it cannot prove: the tests run the role runner from Vitest with throwaway probe roles, not through the worker's entry point, as they do locally. The dev dependencies are installed into `/app/node_modules` from the frozen lockfile, which leaves the production packages' versions unchanged. And `/app/node_modules` is writable by the factory user in the check image only, which makes the check's environment weaker than the worker's, not stronger.
 - Cost: one more image in the CDK assets repository. Its first layers are the worker's, and ECR stores them once.
+
+## Amendment 2026-11-09: the build target and the role prompts
+
+Roles with Bash run in a build container (ADR 0011). Role prompts move out of `.claude/agents` (ADR 0012).
+
+- **The `build` target**, built `FROM worker`, like `boundary-check`:
+  - the dev dependencies (Vitest, TypeScript, ESLint) installed from the frozen lockfile
+  - a pnpm store warmed from that lockfile, so a clone of the change branch installs with `pnpm install --frozen-lockfile --offline`
+  - `FACTORY_CONTAINER=build`, the same non-root user, and the entry point `node /app/factory/worker/src/build-main.ts` (`factory-build <role> --input <key>`)
+  - no `COPY` or `ADD` beyond the worker's, so it holds the same factory code and no secrets. The scenario "Worker image holds no secrets" covers both targets.
+- The build container's task definition, and which state starts it, belong to `add-build-loop`.
+- **Role prompts** are copied with `factory/` as `factory/roles/<role>.md`. `.claude/agents` is no longer in the build context's allowlist or the image.
+- The last stage stays a bare `FROM worker`, so a build without a target is still the production worker.
+- The base image and platform are unchanged: the build container runs on the same `linux/amd64` Node image as the worker. Its size and the offline install time are measured in `add-build-roles` task 2.11.

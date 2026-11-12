@@ -1,0 +1,9 @@
+{
+  "name": "gates-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "lint": "eslint ."
+  }
+}

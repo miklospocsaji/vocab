@@ -1,15 +1,16 @@
 /**
- * The owner's approval of a proposal in the cloud, and escalation of a crashed worker
- * (add-cloud-proposal-run design, "Worker states"):
+ * The owner's approvals in the cloud, and escalation of a crashed worker (add-cloud-proposal-run
+ * and add-build-loop designs, "Worker states"):
  * - AwaitApproval stores the task token, then posts the summary, so the owner cannot reply to a
- *   summary before its token exists.
+ *   summary before its token exists. It serves the proposal and, for a `large` change, the design.
  * - `/approve` closes the open approval and resumes the execution with its token. If resuming
  *   fails, the approval is reopened, so the owner can try again.
- * - Approved records the outcome; Escalate marks the work item and says why, by a fixed code.
+ * - Approved records the outcome and routes the work item on its complexity; Escalate marks the
+ *   work item and says why, by a fixed code.
  * Like the other handlers, these are plain async functions with no AWS-specific control flow:
  * Step Functions is behind `TaskTokens`.
  */
-import { ProposalResult } from "@vocab/factory-artifacts";
+import { DesignResult, ProposalResult } from "@vocab/factory-artifacts";
 import {
   closeApproval,
   findWorkItemByIssue,
@@ -18,12 +19,15 @@ import {
   openApproval,
   reopenApproval,
   setWorkItemState,
+  type ApprovalKind,
   type AuthMode,
   type WorkItemRow,
 } from "@vocab/factory-ledger";
+import { readComplexity } from "./change-files.ts";
+import { escalateWith } from "./escalation.ts";
 import type { EscalationReason } from "./exit-codes.ts";
-import type { HandlerContext, WorkItemState } from "./handler.ts";
-import { renderProposalSummary, type ProposalCost } from "./summary.ts";
+import type { HandlerContext, Transition, WorkItemState } from "./handler.ts";
+import { renderDesignSummary, renderProposalSummary, type ProposalCost } from "./summary.ts";
 
 /** Resumes or fails a paused Step Functions task: SendTaskSuccess and SendTaskFailure. */
 export interface TaskTokens {
@@ -33,6 +37,7 @@ export interface TaskTokens {
 
 const PROPOSAL: WorkItemState = "proposal";
 const AWAITING: WorkItemState = "awaiting-proposal-approval";
+const AWAITING_DESIGN: WorkItemState = "awaiting-design-approval";
 const APPROVED: WorkItemState = "proposal-approved";
 const ESCALATED: WorkItemState = "escalated";
 
@@ -47,19 +52,26 @@ export interface AwaitApprovalContext extends HandlerContext {
 }
 
 /**
- * Stores an open approval with the task token, then posts the summary with the proposal's cost
- * and the approval instruction. The work item stays `awaiting-proposal-approval`.
+ * Stores an open approval of the given kind with the task token, then posts the summary with
+ * the cost and the approval instruction. The work item stays where it is: for a proposal
+ * `awaiting-proposal-approval`, for a design `awaiting-design-approval`.
  */
-export async function awaitApproval(ctx: AwaitApprovalContext, workItem: WorkItemRow, taskToken: string): Promise<WorkItemRow> {
-  if (workItem.state !== AWAITING) {
-    throw new NotApplicable(`work item ${workItem.changeId} is ${workItem.state}, not ${AWAITING}`);
+export async function awaitApproval(ctx: AwaitApprovalContext, workItem: WorkItemRow, taskToken: string, kind: ApprovalKind = "proposal"): Promise<WorkItemRow> {
+  const awaiting = kind === "design" ? AWAITING_DESIGN : AWAITING;
+  if (workItem.state !== awaiting) {
+    throw new NotApplicable(`work item ${workItem.changeId} is ${workItem.state}, not ${awaiting}`);
   }
+  const body = kind === "design" ? await designSummary(ctx, workItem) : await proposalSummary(ctx, workItem);
+  await openApproval(ctx.db, { workItemId: workItem.id, taskToken, kind });
+  await ctx.forge.comment(workItem.issueNumber, body);
+  return workItem;
+}
+
+async function proposalSummary(ctx: AwaitApprovalContext, workItem: WorkItemRow): Promise<string> {
   const result = await proposalResult(ctx, workItem);
   const cost = await proposalCost(ctx, workItem);
   const proposal = await ctx.readProposal?.(workItem);
-
-  await openApproval(ctx.db, { workItemId: workItem.id, taskToken });
-  const body = renderProposalSummary({
+  return renderProposalSummary({
     changeId: workItem.changeId,
     branch: workItem.branch,
     result,
@@ -67,8 +79,17 @@ export async function awaitApproval(ctx: AwaitApprovalContext, workItem: WorkIte
     cost,
     askForApproval: true,
   });
-  await ctx.forge.comment(workItem.issueNumber, body);
-  return workItem;
+}
+
+async function designSummary(ctx: AwaitApprovalContext, workItem: WorkItemRow): Promise<string> {
+  const accepted = (await listAttempts(ctx.db, workItem.id)).filter((attempt) => attempt.state === "design" && attempt.outcome === "succeeded").at(-1);
+  if (accepted === undefined) throw new Error(`work item ${workItem.changeId} has no succeeded design attempt`);
+  return renderDesignSummary({
+    changeId: workItem.changeId,
+    branch: workItem.branch,
+    result: DesignResult.parse(accepted.result),
+    cost: await stateCost(ctx, workItem, ["design", "design-review"]),
+  });
 }
 
 /**
@@ -116,19 +137,47 @@ function nothingAwaitsComment(workItem: WorkItemRow | undefined): string {
   return `Nothing awaits approval: the work item \`${workItem.changeId}\` is \`${workItem.state}\`.`;
 }
 
+export interface ApprovedContext extends HandlerContext {
+  /** A file of the change folder on the work item's branch, by its path in the folder; undefined if absent. */
+  readChangeFile: (workItem: WorkItemRow, path: string) => Promise<string | undefined>;
+}
+
+/** What each complexity goes through after Proposal approval, for the comment. */
+const NEXT_STEP = {
+  small: "it skips Design and goes to Plan",
+  medium: "it goes to Design, then the design reviewer",
+  large: "it goes to Design, then waits for your design approval",
+} as const;
+
 /**
- * Approved: confirms the approval on the issue and moves the work item to `proposal-approved`.
- * A work item there already is left as it is. The comment comes first, so a crash in between
- * repeats the comment rather than losing it.
+ * Approved: confirms the approval on the issue, moves the work item to `proposal-approved`, and
+ * routes it on the change's `x-complexity`: `small` to Plan, the others to Design. A missing or
+ * unknown complexity escalates. A work item there already is routed again with no second
+ * comment, so a retried Approved gives the same route. The comment comes before the state, so a
+ * crash in between repeats the comment rather than losing it.
  */
-export async function approved(ctx: HandlerContext, workItem: WorkItemRow): Promise<WorkItemRow> {
-  if (workItem.state === APPROVED) return workItem;
-  if (workItem.state !== AWAITING) throw new NotApplicable(`work item ${workItem.changeId} is ${workItem.state}, not ${AWAITING}`);
-  await ctx.forge.comment(
-    workItem.issueNumber,
-    `The proposal \`${workItem.changeId}\` is approved. The work item is now \`${APPROVED}\`; the states after it arrive in M3.`,
-  );
-  return setWorkItemState(ctx.db, workItem.id, APPROVED);
+export async function approved(ctx: ApprovedContext, workItem: WorkItemRow): Promise<Transition> {
+  if (workItem.state !== APPROVED && workItem.state !== AWAITING) {
+    throw new NotApplicable(`work item ${workItem.changeId} is ${workItem.state}, not ${AWAITING}`);
+  }
+  const reading = readComplexity(await ctx.readChangeFile(workItem, ".openspec.yaml"));
+
+  let current = workItem;
+  if (workItem.state === AWAITING) {
+    const next = reading.ok ? ` As a \`${reading.complexity}\` change, ${NEXT_STEP[reading.complexity]}.` : "";
+    await ctx.forge.comment(workItem.issueNumber, `The proposal \`${workItem.changeId}\` is approved. The work item is now \`${APPROVED}\`.${next}`);
+    current = await setWorkItemState(ctx.db, workItem.id, APPROVED);
+  }
+
+  if (!reading.ok) {
+    return escalateWith(
+      ctx,
+      current,
+      `The factory escalated \`${workItem.changeId}\` to the owner: ${reading.problem}. Set \`x-complexity\` to \`small\`, \`medium\` or \`large\` on the branch \`${workItem.branch}\` and start the work item again.`,
+      `unknown x-complexity: ${reading.problem}`,
+    );
+  }
+  return { kind: "advance", workItem: current, route: reading.complexity === "small" ? "plan" : "design" };
 }
 
 const ESCALATION_SUMMARY: Record<EscalationReason, string> = {
@@ -162,7 +211,12 @@ async function proposalResult(ctx: HandlerContext, workItem: WorkItemRow): Promi
 
 /** Tokens, estimated cost and auth modes over all the work item's proposal attempts. */
 export async function proposalCost(ctx: HandlerContext, workItem: WorkItemRow): Promise<ProposalCost> {
-  const attempts = (await listAttempts(ctx.db, workItem.id)).filter((attempt) => attempt.state === PROPOSAL);
+  return stateCost(ctx, workItem, [PROPOSAL]);
+}
+
+/** Tokens, estimated cost and auth modes over the work item's attempts in the given states. */
+export async function stateCost(ctx: HandlerContext, workItem: WorkItemRow, states: readonly string[]): Promise<ProposalCost> {
+  const attempts = (await listAttempts(ctx.db, workItem.id)).filter((attempt) => states.includes(attempt.state));
   const ids = new Set(attempts.map((attempt) => attempt.id));
   const usage = (await listAttemptUsage(ctx.db, workItem.id)).filter((row) => ids.has(row.attemptId));
   const sum = (key: "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheCreationTokens") => usage.reduce((total, row) => total + row[key], 0);

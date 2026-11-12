@@ -53,10 +53,11 @@ Inside the build loop a failing gate goes to the classifier: bugs retry the task
 | Forge adapter | Read issues, post comments, open and merge PRs, receive webhooks | GitHub App + `@octokit`, behind a `Forge` interface |
 | Intake | Turn a webhook into an execution, whose first state creates the work item | One Lambda behind a Function URL, outside the VPC; it never touches the ledger |
 | Orchestrator | The work-item state machine: order, retries, waits, budgets, the per-task loop | Step Functions (Standard, JSONata), defined in CDK; states pass ids and pointers, never artifacts (256 KB payload limit) |
-| Factory worker | One container image that runs every state, including any role, and is the only component that touches the ledger | Node + Agent SDK + OpenSpec CLI + git (Playwright from M4), on ECS Fargate |
+| Factory worker | One container image that runs every state, including every role without Bash, and is the only component that touches the ledger | Node + Agent SDK + OpenSpec CLI + git (Playwright from M4), on ECS Fargate |
+| Build container | Runs the roles with Bash (test author, implementer), then the diff check and the gates, and hands a patch back to the worker; holds only the model credential (ADR 0011) | The worker image's `build` target with the dev dependencies and a warm pnpm store, on ECS Fargate; inputs and outputs through S3 |
 | Role runner | Loads role config, runs the agent, validates the output | TypeScript in `factory/roles/` |
 | Spec tooling | Validate and archive OpenSpec changes | `openspec` CLI, called by the deterministic runner |
-| Gates | Typecheck, lint, unit, e2e, contract checks, `openspec validate`, scenario coverage | Deterministic scripts run in the worker, never by an agent |
+| Gates | Typecheck, lint, unit, e2e, contract checks, `openspec validate`, scenario coverage | Deterministic scripts run in the build container after each build role, never by an agent and never in the worker, which does not run agent-written code |
 | Deployer | Per-PR preview stack, production release | CDK deploy, deterministic |
 | Ledger | Work items, attempts, artifacts, costs, events | Postgres on a dedicated Aurora Serverless v2 cluster with auto-pause, separate from the app's; JSON results in the ledger in M2, in S3 from M3 |
 | Approvals | Pause for owner decisions and resume | Step Functions `waitForTaskToken`, with the token in the ledger; a PR/issue comment command starts a worker task that resumes it |
@@ -119,7 +120,7 @@ Results OpenSpec has no place for are small JSON artifacts with zod schemas in `
 
 ## 4. Role catalog
 
-Ten roles, each defined by one config file in `factory/roles/<role>.yaml` plus a prompt in `.claude/agents/<role>.md`. Nine run as Agent SDK sessions; the failure classifier is a single Messages API call (`@anthropic-ai/sdk`) driven by the same config. Models are starting defaults; tune them from benchmark results.
+Ten roles, each defined by one config file in `factory/roles/<role>.yaml` plus a prompt in `factory/roles/<role>.md` with no frontmatter (ADR 0012). All run as Agent SDK sessions through the role runner; the failure classifier is a session with no tools and structured output (owner, 2026-11-09). Models are starting defaults; tune them from benchmark results.
 
 | Role | Default model | Tools | May write | Output | Turn cap |
 | --- | --- | --- | --- | --- | --- |
@@ -127,11 +128,11 @@ Ten roles, each defined by one config file in `factory/roles/<role>.yaml` plus a
 | Architect | `claude-opus-5-5` | Read, Grep, Glob, Edit, Write | `openspec/changes/<id>/design.md`, `app/contracts/` | `design.md`, contracts | 40 |
 | Design reviewer | `claude-sonnet-5-5` | Read, Grep, Glob | nothing | `review.json` | 20 |
 | Planner | `claude-sonnet-5-5` | Read, Grep, Glob, Edit, Write | `openspec/changes/<id>/tasks.md` | `tasks.md`, `tasks.json` | 25 |
-| Test author | `claude-sonnet-5-5` | Read, Grep, Glob, Edit, Write, Bash | `app/**/test/`, `app/e2e/` | test diff for one task | 40 |
-| Implementer | `claude-sonnet-5-5` | Read, Grep, Glob, Edit, Write, Bash | `app/**/src/`, `infra/app-stack.ts`, `infra/preview-stack.ts`, `infra/app/` (never factory infrastructure) | code diff for one task | 60 |
+| Test author | `claude-sonnet-5-5` | Read, Grep, Glob, Edit, Write, Bash | `app/*/test/`, `app/e2e/`, and stubs of the task's new source files | test diff for one task | 40 |
+| Implementer | `claude-sonnet-5-5` | Read, Grep, Glob, Edit, Write, Bash | `app/*/src/` except `app/contracts/`, `infra/app-stack.ts`, `infra/preview-stack.ts`, `infra/app/` (never tests or factory infrastructure) | code diff for one task | 60 |
 | Reviewer | `claude-sonnet-5-5` | Read, Grep, Glob | nothing | `review.json` | 25 |
 | QA explorer | `claude-sonnet-5-5` | Playwright MCP, Read | the runner-provided screenshot directory only (outside the repo; the runner uploads it to S3) | `qa-report.json` + screenshots | 60 |
-| Failure classifier | `claude-haiku-5-5` | none: one Messages API call, input in prompt | nothing | `{kind, evidence}` | 1 |
+| Failure classifier | `claude-haiku-5-5` | none: an Agent SDK session with structured output, input in prompt | nothing | `{kind, evidence}` | 3 |
 | Retro | `claude-haiku-5-5` | Read, Edit, Write | `factory/lessons/`; the runner commits and opens the PR | `retro.md` | 20 |
 
 **Rules that apply to every role**
@@ -145,9 +146,12 @@ Ten roles, each defined by one config file in `factory/roles/<role>.yaml` plus a
   - `skills` to the role's skill list.
   - `maxTurns` and `maxBudgetUsd` from the role config.
   - A `PreToolUse` hook that denies `Edit`, `Write` and `NotebookEdit` outside the role's paths. The hook resolves paths against the worktree, following symlinks.
-- The runner reads `.claude/agents/<role>.md` itself and passes it as the system prompt. Roles never get the Agent tool, so they cannot start subagents.
+  - `sandbox` per place: worker roles keep the sandbox options of ADR 0007; build roles set `sandbox: { enabled: false }` explicitly.
+- The runner reads `factory/roles/<role>.md` itself and passes it as the system prompt. Roles never get the Agent tool, so they cannot start subagents. No role prompt lives in `.claude/agents/`, so Claude Code never registers a role as a subagent (ADR 0012).
+- Each config says where the role runs: `runsIn: worker | build`. The runner refuses a `build` role anywhere but the build container. In M3 the test author and implementer run in the build container; every other role runs in the worker.
 - Every role starts from the change folder and the current `openspec/specs/` for the affected capabilities. Only the proposal author changes requirements and only the architect changes design. The implementer never edits `tasks.md`; the runner ticks a task once its gates pass.
-- Bash is allowlisted per role as permission rules (for example `pnpm test`, `pnpm lint`, `git diff`, `openspec validate`). No network commands, no `git push`; the deterministic runner pushes. Bash can write files, so roles with Bash also run in the SDK `sandbox`, with filesystem writes limited to the role's paths.
+- Only roles in the build container have Bash, allowlisted per role as permission rules (`pnpm typecheck`, `pnpm lint`, `pnpm exec vitest run:*`, `git status:*`, `git diff:*`). No install, no network commands, no `git push`; the deterministic runner pushes. The SDK sandbox cannot start on Fargate (ADR 0007), so Bash can write anywhere in the clone. After the session a diff check against the starting commit fails the attempt if any path outside the role's globs changed, and the worker runs the same check on the patch before it commits (ADR 0011).
+- Writable globs may hold `!` exclusions (the implementer's `!app/contracts/**`) and the `{taskStubs}` placeholder, the task's source files that did not exist at the starting commit (the test author's stubs).
 - The role returns its JSON result as structured output (`outputFormat` built from its zod schema with `z.toJSONSchema`, targeting draft-07, because the CLI rejects zod's default 2020-12 `$schema`). The runner re-parses `structured_output` with zod and validates any OpenSpec files with `openspec validate <id> --strict`. Invalid output, or any non-`success` result subtype, counts as a failed attempt.
 - Every SDK message is streamed to the ledger with token usage, so cost per role, per task and per work item is always known. Cost comes from the result's `modelUsage` and `total_cost_usd`, which are estimates in both auth modes. The auth mode comes from the init message's `apiKeySource`.
 - Prompts receive only artifacts, never other roles' transcripts.
@@ -180,7 +184,7 @@ export async function runRole(role: RoleConfig, item: WorkItem): Promise<Artifac
     options: {
       cwd: item.worktree,
       model: role.model,
-      systemPrompt: role.prompt, // from .claude/agents/<role>.md
+      systemPrompt: role.prompt, // from factory/roles/<role>.md
       tools: role.tools,
       allowedTools: role.allow,
       permissionMode: "dontAsk",
@@ -213,10 +217,10 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 | Language | TypeScript 6.0 (strict) everywhere, Node 24 LTS. TypeScript 7 waits until typescript-eslint supports it. |
 | Package manager | pnpm workspaces; exact versions pinned for the Agent SDK (0.x) and the OpenSpec CLI |
 | Lint | ESLint (flat config) + typescript-eslint |
-| Agents | `@anthropic-ai/claude-agent-sdk`; `@anthropic-ai/sdk` for the classifier and Batch API calls; Anthropic API key in SSM Parameter Store |
+| Agents | `@anthropic-ai/claude-agent-sdk` for every role, the classifier included; `@anthropic-ai/sdk` for Batch API calls; Anthropic API key in SSM Parameter Store |
 | Specs and tasks | OpenSpec (`@fission-ai/openspec`): CLI in the worker image and locally, as a repo dev dependency; changes under `openspec/changes/` |
 | Orchestration | AWS Step Functions (Standard workflows, JSONata), Map state for the per-task loop |
-| Agent compute | ECS Fargate tasks from one `factory-worker` image in ECR |
+| Agent compute | ECS Fargate tasks from one `factory-worker` image in ECR, and its `build` target for the roles with Bash |
 | Infrastructure | AWS CDK v2 (TypeScript) |
 | App frontend | React + Vite PWA, responsive for desktop and mobile; S3 + CloudFront |
 | App backend | API Gateway + Lambda; Postgres on Aurora Serverless v2 |
@@ -230,8 +234,7 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 ```
 /
 ├── CLAUDE.md                 # build/test commands, repo map, conventions (short)
-├── .claude/
-│   ├── agents/               # one prompt file per role
+├── .claude/                  # no agents/: role prompts live in factory/roles/ (ADR 0012)
 │   ├── skills/               # reusable know-how (e.g. writing-scenarios, splitting-tasks), plus openspec-* skills from `openspec init`
 │   ├── commands/opsx/        # OpenSpec slash commands from `openspec init`, for hand-running stages
 │   └── settings.json         # hooks shared by local Claude Code and the worker
@@ -240,7 +243,7 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 │   ├── brief.md              # this document
 │   └── adr/                  # architecture decision records
 ├── factory/
-│   ├── roles/                # role configs (yaml) + role runner
+│   ├── roles/                # role configs (yaml), prompts (md) + role runner
 │   ├── artifacts/            # zod schemas for every JSON result
 │   ├── orchestrator/         # state machine definition + task handlers
 │   ├── forge/                # Forge interface + GitHub implementation
@@ -248,7 +251,7 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 │   ├── gates/                # deterministic checks, incl. scenario coverage
 │   ├── lessons/              # curated lessons written by the retro role
 │   ├── benchmark/            # reference tasks + runner + results
-│   └── worker/               # Dockerfile for factory-worker
+│   └── worker/               # Dockerfile for factory-worker and its build target
 ├── app/
 │   ├── contracts/            # zod/OpenAPI contracts written by the architect
 │   ├── web/                  # React PWA
@@ -274,9 +277,10 @@ One TypeScript monorepo holds the factory, the app and all infrastructure; every
 
 ### Security
 
-- Worker tasks run in the public subnets of a small VPC, with a public IP and no inbound access. Aurora has no public address and accepts connections only from the worker. There is no network-level egress control (owner decision, section 8): the Bash allowlist, per-role `WebFetch` domain rules, a read guard and a spend-limited API key limit what an agent can reach and leak. The SDK's Bash sandbox cannot start in a container with no added privileges (ADR 0007), so in M2 the proposal author has no Bash. M3 decides how its Bash roles run safely.
-- Each task gets a short-lived GitHub App installation token scoped to this repo, and no AWS credentials beyond reporting to its own execution and, from M3, reading its inputs and writing its artifacts. Deploys use a separate deployer role that agents never hold.
-- Agent-visible content from issues, web pages or the app under test is data, never instructions. Role prompts say so, and hooks, permission rules and the sandbox enforce the path and command allowlists regardless.
+- Worker tasks run in the public subnets of a small VPC, with a public IP and no inbound access. Aurora has no public address and accepts connections only from the worker. There is no network-level egress control (owner decision, section 8): the Bash allowlist, per-role `WebFetch` domain rules, a read guard and a spend-limited API key limit what an agent can reach and leak. The SDK's Bash sandbox cannot start in a container with no added privileges (ADR 0007), so no role in the worker has Bash.
+- Roles with Bash run in the build container, which holds only the model credential and refuses to start if any other factory credential is in its environment (ADR 0011). It clones the branch with no token and never pushes. Agent-written code there can read the model credential and send it anywhere; the owner accepts that risk (section 8). The worker checks every patch's paths before it commits.
+- Each worker task gets a short-lived GitHub App installation token scoped to this repo, and no AWS credentials beyond reporting to its own execution and, from M3, reading its inputs and writing its artifacts. A build task gets no GitHub token, and AWS access only to its work item's artifacts. Deploys use a separate deployer role that agents never hold.
+- Agent-visible content from issues, web pages or the app under test is data, never instructions. Role prompts say so, and hooks, permission rules, the sandbox (worker) and the diff check (build container) enforce the path and command allowlists regardless.
 - No factory role may change factory infrastructure (`infra/factory-stack.ts` and its constructs) through a work item. It changes only through the owner or a local Claude Code session.
 - Monthly AWS budget alarm and a per-work-item token budget; exceeding either pauses the execution and notifies the owner.
 
@@ -389,6 +393,10 @@ Decided on 26–27 October 2026. Claude Code treats these as requirements and re
 - [x] **Budget limits (M2, changed 2 November 2026):** $50 a month AWS budget alarm, covering the whole shared AWS account; $20 a month Anthropic workspace limit; $5 model spend per work item.
 - [x] **Languages (M3):** English → Hungarian first; the enrichment eval set starts with this pair.
 - [x] **Users (M4):** owner only. Admin-created Cognito users, no sign-up page; the data model stays multi-user.
+- [x] **Bash roles (M3, 8 November 2026):** roles with Bash (test author, implementer) run in a build container that holds only the model credential (ADR 0011). A test author and implementer without Bash were rejected. Accepted risk: agent-written code there can read the model credential and, with no egress control, send it anywhere; in the cloud that is the spend-limited, revocable API key.
+- [x] **Role prompts (M3, 8 November 2026):** prompts live at `factory/roles/<role>.md` with no frontmatter, and `.claude/agents/` is removed, so Claude Code never registers a factory role as a subagent (ADR 0012).
+- [x] **Failure classifier (M3, 9 November 2026):** an Agent SDK session with no tools, a cap of 3 turns and structured output, instead of a Messages API call, so it runs in both auth modes and is recorded like every other role.
+- [x] **Local build runs (M3, 9 November 2026):** local runs of the build container keep the subscription token (ADR 0006). Accepted risk: agent-written code in the container can read it, and it has no spend limit of its own.
 - [x] **Fixture data (M0):** an anonymised copy in git, produced by a committed script that keeps the structure and real sentences from a few books and strips device IDs and ASINs.
 - [x] **UX direction (M5):** decide after the three prototypes; no leaning before then.
 - [x] **Domain (M4):** web app at `vocab.logtion.app`, API at `api.vocab.logtion.app`. The owner's domain `logtion.app` delegates `vocab.logtion.app` to a Route 53 hosted zone in the app's AWS account (NS records added at the owner's DNS). Previews live at `pr-<n>.vocab.logtion.app` and `api.pr-<n>.vocab.logtion.app`. Certificates come from ACM with DNS validation; the CloudFront certificate must be issued in us-east-1, while the API certificate lives in eu-central-1.

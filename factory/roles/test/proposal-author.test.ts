@@ -47,6 +47,7 @@ describe("proposal-author role", () => {
     expect(role).toMatchObject({
       name: ROLE,
       model: "claude-opus-5-5",
+      runsIn: "worker",
       maxTurns: 30,
       maxBudgetUsd: 1.5,
       authMode: "subscription",
@@ -86,10 +87,12 @@ describe("proposal-author role", () => {
     expect(options?.allowedTools?.filter((rule) => rule.startsWith("Bash"))).toEqual([]);
   });
 
-  it("has a prompt that neither offers Bash nor tells the role to run openspec", async () => {
+  it("has a prompt, without frontmatter, that neither offers Bash nor tells the role to run openspec", async () => {
     const role = await loadRole(ROLE);
-    const file = readFileSync(resolve(import.meta.dirname, "../../../.claude/agents", `${ROLE}.md`), "utf8");
-    expect(file).not.toMatch(/^tools:.*\bBash\b/m);
+    const file = readFileSync(resolve(import.meta.dirname, "..", `${ROLE}.md`), "utf8");
+    expect(file).not.toMatch(/^\s*---/);
+    expect(file).not.toMatch(/\bBash\b/);
+    expect(role.prompt).toBe(file.trim());
     expect(role.prompt).not.toMatch(/\b[Rr]un `openspec/);
   });
 

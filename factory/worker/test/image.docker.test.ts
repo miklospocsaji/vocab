@@ -76,6 +76,8 @@ describe("factory-worker image", () => {
       .dependencies?.["@fission-ai/openspec"];
     expect(pinned).toBeDefined();
     expect(sh("cd /app && OPENSPEC_TELEMETRY=0 node_modules/.bin/openspec --version")).toBe(pinned);
-    expect(sh("test -f /app/factory/roles/proposal-author.yaml && test -f /app/.claude/agents/proposal-author.md && echo ok")).toBe("ok");
+    expect(sh("test -f /app/factory/roles/proposal-author.yaml && test -f /app/factory/roles/proposal-author.md && echo ok")).toBe("ok");
+    // Role prompts are not Claude Code agents (ADR 0012).
+    expect(sh("test -e /app/.claude && echo present || echo absent")).toBe("absent");
   });
 });
