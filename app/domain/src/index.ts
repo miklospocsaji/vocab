@@ -1,2 +1,2 @@
-// Public entry point of @vocab/domain. Empty until the first work item adds to it.
-export {};
+// Public entry point of @vocab/domain.
+export { cleanUsage } from "./clean-usage.ts";
