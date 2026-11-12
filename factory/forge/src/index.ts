@@ -1,5 +1,5 @@
 export { ForgeError } from "./forge.ts";
-export type { CreatedBranch, Forge, ForgeErrorKind, Issue, PushBranchOptions } from "./forge.ts";
+export type { CreatedBranch, Forge, ForgeErrorKind, Issue, NewPullRequest, PullRequest, PushBranchOptions } from "./forge.ts";
 export { ghAuthToken } from "./gh-token.ts";
 export type { RunCommand } from "./gh-token.ts";
 export { appCommitter, createInstallationTokenProvider } from "./github-app.ts";

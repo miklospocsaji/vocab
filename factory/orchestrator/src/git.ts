@@ -3,7 +3,7 @@
  * commits limited to the change folder, and pushes of the work item's branch.
  */
 import { execFile } from "node:child_process";
-import { mkdir, realpath, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -101,4 +101,64 @@ export async function commitChange(options: CommitChangeOptions): Promise<string
 export async function push(options: PushOptions): Promise<void> {
   const { worktree, branch } = options;
   await git(worktree, "push", "origin", `refs/heads/${branch}:refs/heads/${branch}`);
+}
+
+
+export interface CommitPathsOptions {
+  worktree: string;
+  /** Worktree-relative files or folders; those without changes, or that do not exist, are left out. */
+  paths: readonly string[];
+  message: string;
+  /** Defaults to `FACTORY_GIT_IDENTITY`. */
+  identity?: GitIdentity;
+}
+
+/**
+ * Commits the changes under `paths`, and nothing else, on the worktree's branch. Returns the new
+ * commit's sha, or undefined when nothing under `paths` changed.
+ */
+export async function commitPaths(options: CommitPathsOptions): Promise<string | undefined> {
+  const { worktree, paths, message, identity = FACTORY_GIT_IDENTITY } = options;
+  const changed = await changedUnder(worktree, paths);
+  if (changed.length === 0) return undefined;
+  await git(worktree, "add", "--all", "--", ...changed);
+  await git(worktree, "-c", `user.name=${identity.name}`, "-c", `user.email=${identity.email}`, "commit", "--message", message, "--", ...changed);
+  return git(worktree, "rev-parse", "HEAD");
+}
+
+/** The files under `paths` that differ from HEAD, untracked ones included. */
+async function changedUnder(worktree: string, paths: readonly string[]): Promise<string[]> {
+  const { stdout } = await run("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...paths], { cwd: worktree, encoding: "utf8" });
+  // Entries are `XY path`, NUL-separated; a rename adds its source as the next entry.
+  const entries = stdout.split("\0").filter((entry) => entry !== "");
+  const files: string[] = [];
+  for (let i = 0; i < entries.length; i += 1) {
+    const entry = entries[i] ?? "";
+    files.push(entry.slice(3));
+    if (entry.startsWith("R") || entry.startsWith("C")) i += 1;
+  }
+  return files;
+}
+
+export interface ChangeFileReaderOptions {
+  /** The local clone the work item's worktree is added to. */
+  repo: string;
+  /** The factory's home directory; defaults to `factoryHome()`. */
+  home?: string;
+}
+
+/**
+ * Reads files of a work item's change folder, by their path inside it, from the work item's
+ * worktree (created at the branch's head if it does not exist). A missing file is undefined.
+ */
+export function changeFileReader(options: ChangeFileReaderOptions): (workItem: { changeId: string; branch: string }, path: string) => Promise<string | undefined> {
+  return async (workItem, path) => {
+    const worktree = await ensureWorktree({ repo: options.repo, changeId: workItem.changeId, branch: workItem.branch, ...(options.home === undefined ? {} : { home: options.home }) });
+    try {
+      return await readFile(join(worktree, "openspec/changes", workItem.changeId, path), "utf8");
+    } catch (error) {
+      if ((error as { code?: unknown }).code === "ENOENT") return undefined;
+      throw error;
+    }
+  };
 }

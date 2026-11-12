@@ -4,13 +4,13 @@
  * a temp bare repo, so no credentials are involved.
  *
  * With the `remote` option, branches live in that git repository instead of in memory, so
- * a branch Intake creates can be fetched by a worktree, as on the real forge. Issues and
- * comments stay in memory either way.
+ * a branch Intake creates can be fetched by a worktree, as on the real forge. Issues, comments
+ * and pull requests stay in memory either way; its pull requests are all open.
  */
 import { execFile, execFileSync } from "node:child_process";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
-import { ForgeError, type CreatedBranch, type Forge, type Issue, type PushBranchOptions } from "./forge.ts";
+import { ForgeError, type CreatedBranch, type Forge, type NewPullRequest, type PullRequest, type Issue, type PushBranchOptions } from "./forge.ts";
 
 export interface FakeIssue {
   number: number;
@@ -53,6 +53,8 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 export class FakeForge implements Forge {
   /** Every comment posted, in order. */
   readonly comments: FakeComment[] = [];
+  /** Every pull request opened, in order. */
+  readonly pullRequests: PullRequest[] = [];
 
   readonly #defaultBranch: string;
   readonly #issues = new Map<number, Issue>();
@@ -147,6 +149,25 @@ export class FakeForge implements Forge {
     } catch (error) {
       throw new ForgeError(`cloning into ${directory} failed: ${error instanceof Error ? error.message : String(error)}`, "failed");
     }
+  }
+
+  /** Refuses, as GitHub does, a head or base that does not exist and a head with an open pull request. */
+  async openPullRequest(request: NewPullRequest): Promise<PullRequest> {
+    if ((await this.#headOf(request.head)) === undefined || (await this.#headOf(request.base)) === undefined) {
+      throw new ForgeError(`opening a pull request from ${request.head} into ${request.base} failed: no such branch`, "failed", 422);
+    }
+    if (this.pullRequests.some((pr) => pr.head === request.head)) {
+      throw new ForgeError(`opening a pull request from ${request.head} failed: one is open already`, "failed", 422);
+    }
+    const number = 100 + this.pullRequests.length;
+    const pr: PullRequest = { ...request, number, url: `https://forge.invalid/pull/${String(number)}` };
+    this.pullRequests.push(pr);
+    return { ...pr };
+  }
+
+  findPullRequest(head: string): Promise<PullRequest | undefined> {
+    const found = this.pullRequests.find((pr) => pr.head === head);
+    return Promise.resolve(found === undefined ? undefined : { ...found });
   }
 
   async #headOf(branch: string): Promise<string | undefined> {

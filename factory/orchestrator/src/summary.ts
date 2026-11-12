@@ -3,9 +3,9 @@
  * (from the pushed `proposal.md`), the affected capabilities, complexity and open questions
  * (from the proposal author's result), and where to review it. In the cloud it also shows the
  * proposal's cost and ends by asking the owner to reply `/approve`; the local CLI's summary
- * stays as in M1.
+ * stays as in M1. A `large` change's design gets a summary of its own, for the owner's approval.
  */
-import type { ProposalResult } from "@vocab/factory-artifacts";
+import type { DesignResult, ProposalResult } from "@vocab/factory-artifacts";
 import type { AuthMode, TokenUsage } from "@vocab/factory-ledger";
 
 /** What the proposal cost, over all its attempts. */
@@ -32,6 +32,9 @@ export interface ProposalSummaryInput {
 /** The comment's last paragraph in the cloud. */
 export const APPROVAL_INSTRUCTION = "To approve the proposal, reply `/approve` on this issue.";
 
+/** The design summary's last paragraph. */
+export const DESIGN_APPROVAL_INSTRUCTION = "To approve the design, reply `/approve` on this issue.";
+
 export function renderProposalSummary(input: ProposalSummaryInput): string {
   const { changeId, branch, result, proposal = "", cost, askForApproval = false } = input;
   const why = section(proposal, "Why");
@@ -54,6 +57,38 @@ export function renderProposalSummary(input: ProposalSummaryInput): string {
     questions.join("\n"),
     `Review the change in \`openspec/changes/${changeId}/\` on branch \`${branch}\`. The work item is now \`awaiting-proposal-approval\`.`,
     ...(askForApproval ? [APPROVAL_INSTRUCTION] : []),
+  ].join("\n\n");
+}
+
+export interface DesignSummaryInput {
+  changeId: string;
+  branch: string;
+  /** The architect's result for the design on the branch. */
+  result: DesignResult;
+  /** What Design cost, over all its attempts. */
+  cost: ProposalCost;
+}
+
+/**
+ * The comment for a `large` change's design: the architect's summary, the contracts it changed,
+ * the decisions that need an ADR, its open questions and cost, and the approval instruction.
+ */
+export function renderDesignSummary(input: DesignSummaryInput): string {
+  const { changeId, branch, result, cost } = input;
+  const list = (items: readonly string[], none: string, code = false) =>
+    items.length === 0 ? none : items.map((item) => `- ${code ? `\`${item}\`` : item}`).join("\n");
+  return [
+    `## Design ready: \`${changeId}\``,
+    result.summary,
+    [`- **Change id:** \`${changeId}\``, `- **Branch:** \`${branch}\``, `- **Cost:** ${costLine(cost)}`].join("\n"),
+    "### Contracts",
+    list(result.contracts, "No changes in `app/contracts/`.", true),
+    "### Decisions that need an ADR",
+    list(result.adrNeeded, "None."),
+    "### Open questions",
+    list(result.openQuestions, "None."),
+    `Review \`openspec/changes/${changeId}/design.md\` on branch \`${branch}\`. The work item is now \`awaiting-design-approval\`.`,
+    DESIGN_APPROVAL_INSTRUCTION,
   ].join("\n\n");
 }
 

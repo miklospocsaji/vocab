@@ -109,7 +109,7 @@ beforeEach(() => {
 afterEach(async () => {
   vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
-  await db.pool.query("TRUNCATE work_items, attempts, messages, events, approvals");
+  await db.pool.query("TRUNCATE work_items, attempts, messages, events, approvals, tasks");
 });
 
 describe("factory run", () => {

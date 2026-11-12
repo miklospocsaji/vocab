@@ -11,7 +11,7 @@ import { execFile } from "node:child_process";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
 import { Octokit } from "@octokit/rest";
-import { ForgeError, type CreatedBranch, type Forge, type ForgeErrorKind, type Issue, type PushBranchOptions } from "./forge.ts";
+import { ForgeError, type CreatedBranch, type Forge, type ForgeErrorKind, type Issue, type NewPullRequest, type PullRequest, type PushBranchOptions } from "./forge.ts";
 import type { TokenProvider } from "./github-app.ts";
 
 /** Runs git; GitHubForge uses it only to push. */
@@ -174,6 +174,22 @@ export class GitHubForge implements Forge {
     }
   }
 
+  /** GitHub answers 422 for a head with an open pull request already, or one that does not exist. */
+  async openPullRequest(request: NewPullRequest): Promise<PullRequest> {
+    const { data } = await this.#call(`opening a pull request from ${request.head}`, () =>
+      this.#octokit.rest.pulls.create({ owner: this.#owner, repo: this.#repo, head: request.head, base: request.base, title: request.title, body: request.body }),
+    );
+    return toPullRequest(data);
+  }
+
+  async findPullRequest(head: string): Promise<PullRequest | undefined> {
+    const { data } = await this.#call(`finding the pull request from ${head}`, () =>
+      this.#octokit.rest.pulls.list({ owner: this.#owner, repo: this.#repo, head: `${this.#owner}:${head}`, state: "open", per_page: 1 }),
+    );
+    const [found] = data;
+    return found === undefined ? undefined : toPullRequest(found);
+  }
+
   #repositoryUrl(): string {
     return `${this.#gitBaseUrl}/${this.#owner}/${this.#repo}.git`;
   }
@@ -222,6 +238,19 @@ export class GitHubForge implements Forge {
     for (const token of this.#seen) result = result.replaceAll(token, "[REDACTED]");
     return result;
   }
+}
+
+interface PullRequestData {
+  number: number;
+  html_url: string;
+  title: string;
+  body: string | null;
+  head: { ref: string };
+  base: { ref: string };
+}
+
+function toPullRequest(data: PullRequestData): PullRequest {
+  return { number: data.number, url: data.html_url, head: data.head.ref, base: data.base.ref, title: data.title, body: data.body ?? "" };
 }
 
 function statusOf(error: unknown): number | undefined {

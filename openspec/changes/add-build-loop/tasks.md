@@ -8,14 +8,14 @@ Scenarios carried unchanged inside MODIFIED requirements keep their existing tes
 
 ### Ledger and Forge
 
-- [ ] 3.1 Failing tests against the local Postgres for migration 0003 and its queries: tasks inserted from a plan; a re-plan supersedes only unfinished tasks; one open approval per work item, whatever its kind; attempts carry a task, a store prefix, a classification and a gates result; `design_flaws` counts.
-- [ ] 3.2 Write `factory/ledger/migrations/0003_build.sql` and the queries.
-- [ ] 3.3 Failing tests for `openPullRequest` and `findPullRequest` on `GitHubForge` (fake fetch) and `FakeForge`, and for the token request. Scenario: Installation token is scoped to the repository (now with `pull_requests: write`).
-- [ ] 3.4 Write them.
+- [x] 3.1 Failing tests against the local Postgres for migration 0003 and its queries: tasks inserted from a plan; a re-plan supersedes only unfinished tasks; one open approval per work item, whatever its kind; attempts carry a task, a store prefix, a classification and a gates result; `design_flaws` counts.
+- [x] 3.2 Write `factory/ledger/migrations/0003_build.sql` and the queries.
+- [x] 3.3 Failing tests for `openPullRequest` and `findPullRequest` on `GitHubForge` (fake fetch) and `FakeForge`, and for the token request. Scenario: Installation token is scoped to the repository (now with `pull_requests: write`).
+- [x] 3.4 Write them.
 
 ### Design and Plan
 
-- [ ] 3.5 Failing handler tests with fake roles. Scenarios:
+- [x] 3.5 Failing handler tests with fake roles. Scenarios:
   - Small change skips Design
   - Medium change gets the agent review
   - Large design waits for the owner
@@ -24,7 +24,7 @@ Scenarios carried unchanged inside MODIFIED requirements keep their existing tes
   - Plan stores its tasks
 
   Also: an unknown `x-complexity` escalates; each accepted design and plan is committed by the bot and pushed.
-- [ ] 3.6 Write the `approved` routing, `design`, the generalised `awaitApproval`, `plan`, and the design summary comment.
+- [x] 3.6 Write the `approved` routing, `design`, the generalised `awaitApproval`, `plan`, and the design summary comment.
 
 ### Step, Record and the PR
 

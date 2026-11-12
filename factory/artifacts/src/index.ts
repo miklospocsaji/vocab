@@ -3,7 +3,7 @@ import { GatesResult } from "./gates-result.ts";
 import { ProposalResult } from "./proposal-result.ts";
 import { ClassificationResult, DesignResult, ImplementationResult, PlanResult, ReviewResult, TestResult } from "./role-results.ts";
 
-export { CAPABILITIES, ProposalResult } from "./proposal-result.ts";
+export { CAPABILITIES, Complexity, ProposalResult } from "./proposal-result.ts";
 export { GATE_CHECKS, GatesResult } from "./gates-result.ts";
 export type { GateCheck } from "./gates-result.ts";
 export {
