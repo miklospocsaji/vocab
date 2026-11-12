@@ -10,7 +10,8 @@ tools: []
 allow: []
 writable: []
 skills: []
-# Structured output may take a turn of its own; the live test (task 2.13) records the real count.
+# Structured output takes a turn of its own: the live test (task 2.13, 2026-11-12) measured 2 turns,
+# so 3 leaves one turn of headroom.
 maxTurns: 3
 maxBudgetUsd: 0.05
 resultSchema: classification-result

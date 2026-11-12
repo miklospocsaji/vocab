@@ -1,0 +1,34 @@
+# The implementer (brief, section 4): makes one task's tests pass without editing them. It writes
+# app source and the app and preview stack files (owner decision, brief section 8), never tests,
+# contracts, tasks.md or any other file of the change. The green gate checks its outcome.
+name: implementer
+model: claude-sonnet-5-5
+# Has Bash, so it runs only in the build container, with the sandbox off; its write boundary is
+# the diff check after the session (ADR 0011).
+runsIn: build
+tools: [Read, Grep, Glob, Edit, Write, Bash]
+# No install, no pnpm add, no network command and no git push. The runner denies git push and
+# network commands whatever this list says.
+allow:
+  - Read
+  - Grep
+  - Glob
+  - Edit
+  - Write
+  - Bash(pnpm typecheck)
+  - Bash(pnpm lint)
+  - Bash(pnpm exec vitest run:*)
+  - Bash(git status:*)
+  - Bash(git diff:*)
+# The contracts are the architect's; the ! exclusion keeps them out of app/*/src/**.
+writable:
+  - app/*/src/**
+  - "!app/contracts/**"
+  - infra/app-stack.ts
+  - infra/preview-stack.ts
+  - infra/app/**
+skills: []
+maxTurns: 60
+maxBudgetUsd: 1.5
+resultSchema: implementation-result
+authMode: subscription

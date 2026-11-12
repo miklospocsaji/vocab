@@ -63,12 +63,16 @@ Build step M3.2. Depends on `add-build-gates`. Unit tests run in `pnpm check` wi
 
 ### Roles
 
-- [ ] 2.12 Write the configs and prompts for `architect`, `design-reviewer`, `planner`, `test-author` and `implementer`, following `design.md`. Unit tests pin each config's tools, writable globs, `runsIn`, model and budget. A unit test lints sample stubs, one sync and one async with `_` parameters, as under `app/domain/src/`, with the repo's ESLint config and expects no errors; the same stub under `factory/` still fails.
-- [ ] 2.13 Live tests (`pnpm test:live`), each on a small fixture change in a temp repo, each under $0.50, in api-key mode. Record the cost of each here:
+- [x] 2.12 Write the configs and prompts for `architect`, `design-reviewer`, `planner`, `test-author` and `implementer`, following `design.md`. Unit tests pin each config's tools, writable globs, `runsIn`, model and budget. A unit test lints sample stubs, one sync and one async with `_` parameters, as under `app/domain/src/`, with the repo's ESLint config and expects no errors; the same stub under `factory/` still fails.
+- [x] 2.13 Live tests (`pnpm test:live`), each on a small fixture change in a temp repo, each under $0.50, in api-key mode. Record the cost of each here:
   - Architect output is complete
+    - Recorded 2026-11-12 (`architect.live.test.ts`, fixture `add-lookup-counts`, api-key): $0.1342, 12 turns. It wrote `design.md` and `app/contracts/src/index.ts`, listed one ADR (case folding) and two open questions.
   - the design reviewer returns a result that parses (one run on a design with a planted contradiction, expected `changes-requested`)
+    - Recorded 2026-11-12 (`design-reviewer.live.test.ts`, api-key): $0.0231, 2 turns. `changes-requested`, with a blocker naming the contradiction, a major finding (no importer change in the design) and a minor one.
   - the planner returns a plan that passes `validatePlan`
+    - Recorded 2026-11-12 (`planner.live.test.ts`, api-key): $0.0274, 5 turns. One task covering both scenarios, with no problems from `validatePlan`.
   - the classifier labels a fixture gate failure, recording how many turns it took
+    - Recorded 2026-11-12 (`classifier.live.test.ts`, api-key): $0.0005, 2 turns, `bug` with evidence quoting the assertion. `maxTurns` stays 3, one turn of headroom. Total for the four runs: $0.1852.
 - [ ] 2.14 Live boundary tests in the build container (`pnpm test:live` through the Docker harness, like `container.live.test.ts`). Scenarios:
   - Non-allowlisted command is denied (also `pnpm lint && curl https://example.com`)
   - Build container holds only the model credential

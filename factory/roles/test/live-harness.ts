@@ -129,6 +129,10 @@ export interface ProbeOptions {
   changeFiles?: PromptArtifact[];
   /** The previous attempt's failure, as the Proposal handler passes it on a retry. */
   evidence?: RetryEvidence;
+  /** The current specs of the affected capabilities; defaults to none. */
+  specs?: PromptArtifact[];
+  /** A prompt the caller rendered, as for the classifier and the build roles. */
+  prompt?: string;
 }
 
 /** One real runner attempt for the probe role; every message the recorder saw is kept. */
@@ -157,7 +161,8 @@ export async function runProbe(role: Role, worktree: string, probe: ProbeOptions
         worktree,
         issue: probe.issue ?? { title: "Boundary probe", body: "Follow your role instructions." },
         changeFiles: probe.changeFiles ?? [],
-        specs: [],
+        specs: probe.specs ?? [],
+        ...(probe.prompt === undefined ? {} : { prompt: probe.prompt }),
       },
       probe.evidence,
     );
