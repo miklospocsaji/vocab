@@ -2,6 +2,7 @@ docs/vocab.db
 node_modules/
 dist/
 coverage/
+!factory/gates/test/fixtures/coverage/
 *.tsbuildinfo
 .env*
 cdk.out/
