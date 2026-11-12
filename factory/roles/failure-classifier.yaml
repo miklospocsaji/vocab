@@ -1,0 +1,17 @@
+# The failure classifier (brief, section 4): labels a failed gate so the build loop can route it.
+# An Agent SDK session with no tools and structured output, not a Messages API call, so it runs in
+# both auth modes and is recorded like every other role (owner decision of 2026-11-09). Its input
+# is in the prompt: the failed gates.json, the task and the changed paths, fenced as untrusted.
+name: failure-classifier
+model: claude-haiku-5-5
+# No tools, so it runs in the worker (ADR 0011).
+runsIn: worker
+tools: []
+allow: []
+writable: []
+skills: []
+# Structured output may take a turn of its own; the live test (task 2.13) records the real count.
+maxTurns: 3
+maxBudgetUsd: 0.05
+resultSchema: classification-result
+authMode: subscription

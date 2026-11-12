@@ -100,16 +100,20 @@ The image is built from master at deploy time. A branch whose lockfile differs f
 **Entry point** (`factory/worker/src/build.ts`). `factory-build <role> --input <key>`:
 1. Refuse to start (exit 2) if the environment holds any of: `FACTORY_GITHUB_APP_PRIVATE_KEY`, `FACTORY_GITHUB_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, `FACTORY_LEDGER_SECRET`, `FACTORY_DATABASE_URL`, `FACTORY_WEBHOOK_SECRET`. The error names the variable, never its value.
 2. Read `input.json`, which holds:
-   - `changeId`, `branch`, `baseCommit`
+   - `changeId`, `branch`, `baseCommit`, and `cloneUrl`, the public URL cloned with no token
    - the task from `tasks.json`
-   - the role's evidence from earlier attempts (`gates.json`, the classification, the diff check)
+   - the role's evidence from earlier attempts (`gates.json`, the classification, the diff check), as `{ reason, evidence }` text, fenced as untrusted in the role's prompt
    - the green gates' `coveredSoFar`
+
+   Outputs go next to the input key. The store is `FACTORY_STORE_DIR` locally and `FACTORY_ARTIFACT_BUCKET` in the cloud. The warm store is at `FACTORY_PNPM_STORE`, and the pnpm metadata cache it needs offline is the factory user's.
 3. Clone the branch into `$HOME/work` and check out `baseCommit`. Install with `pnpm install --frozen-lockfile --offline`.
 4. Run the role with `runRole`, recording messages to `messages.jsonl` in the store rather than the ledger (a `JsonlRecorder` behind the same `Recorder` interface as `LedgerRecorder`).
 5. Run the diff check (below).
 6. If the session succeeded and the diff check passed, run the gates: red after the test author, green after the implementer. Redact the model credential's value.
 7. Write `patch.diff` (`git diff --binary <baseCommit>` with untracked files added with `--intent-to-add`), `gates.json` and `outcome.json`.
 8. Exit 0 when the outcome is written, whether it passed or failed. Exit 1 on a crash, exit 2 on bad input.
+
+A work item can carry a `prompt` its caller rendered (the build roles' task prompt, the classifier's prompt) and its `taskStubs`. The runner runs `openspec validate` only for a role with writable paths, so the classifier and the design reviewer need no valid change folder.
 
 `runRole` takes `container: "worker" | "build"` from its caller. It throws `RoleConfigError` for a `runsIn: build` role when it is not `"build"`. The worker passes `"worker"`; only `build.ts` passes `"build"`, and only when `FACTORY_CONTAINER=build`.
 

@@ -32,7 +32,7 @@ Build step M3.2. Depends on `add-build-gates`. Unit tests run in `pnpm check` wi
 
 ### Runner boundaries
 
-- [ ] 2.6 Failing unit tests with a fake SDK query. Scenarios:
+- [x] 2.6 Failing unit tests with a fake SDK query. Scenarios:
   - Worker refuses a build role
   - Bash write outside the role's paths fails the attempt (the diff check against a temp repo where a fake session's "Bash" wrote a test file)
   - Commit made during the session is still checked
@@ -41,24 +41,25 @@ Build step M3.2. Depends on `add-build-gates`. Unit tests run in `pnpm check` wi
   - Implementer cannot edit a test
 
   Also: build roles get `sandbox: { enabled: false }` and worker roles keep ADR 0007's options; a `{taskStubs}` file that already existed fails the diff check.
-- [ ] 2.7 Write `diff-check.ts`, the `container` option and the sandbox switch in `runner.ts`.
+- [x] 2.7 Write `diff-check.ts`, the `container` option and the sandbox switch in `runner.ts`.
 
 ### Failure classifier
 
-- [ ] 2.8 Failing unit tests with a fake SDK query. Scenarios:
+- [x] 2.8 Failing unit tests with a fake SDK query. Scenarios:
   - Classifier labels a failed gate (the attempt, tokens and estimated cost land in the ledger)
   - Instructions in gate output are data
 
   Also: the session gets no tools; a reply that fails the schema fails the attempt with reason `invalid-result`. A live test (task 2.13) records the turns structured output takes, and `maxTurns` is set from it.
-- [ ] 2.9 Write the `failure-classifier` config and prompt, and the classifier's prompt builder.
+- [x] 2.9 Write the `failure-classifier` config and prompt, and the classifier's prompt builder.
 
 ### Build container
 
-- [ ] 2.10 Pin `@aws-sdk/client-s3` exactly. Failing unit tests for `FsStore`, `S3Store` (fake client) and `build.ts` with a fake runner, a temp git remote and an `FsStore`. Scenarios:
+- [x] 2.10 Pin `@aws-sdk/client-s3` exactly. Failing unit tests for `FsStore`, `S3Store` (fake client) and `build.ts` with a fake runner, a temp git remote and an `FsStore`. Scenarios:
   - Build container refuses factory credentials
 
   Also: the outcome is written when the session fails, and when the diff check fails, with no gates run; the patch applies cleanly to the base commit; `messages.jsonl` replays through `LedgerRecorder` to the same rows as a live recording; a key with `..` is refused.
-- [ ] 2.11 Write `store.ts`, `build.ts`, `build-main.ts` and the Dockerfile `build` target. Docker test (`build.docker.test.ts`): the image builds, holds no secrets, runs as non-root and has `FACTORY_CONTAINER=build`. Scenario: Worker image holds no secrets (for both targets). Record the image size and the offline install time here.
+- [x] 2.11 Write `store.ts`, `build.ts`, `build-main.ts` and the Dockerfile `build` target. Docker test (`build.docker.test.ts`): the image builds, holds no secrets, runs as non-root and has `FACTORY_CONTAINER=build`. Scenario: Worker image holds no secrets (for both targets). Record the image size and the offline install time here.
+  - Recorded 2026-11-12 (local Docker, linux/amd64): the `build` target is 2.50 GB (the worker is 1.03 GB). An offline install of a checkout from the warm store takes 15.6 s, container start included (14.7 s for pnpm alone). A checkout whose lockfile differs from the image's fails offline with `ERR_PNPM_NO_OFFLINE_META`, which is the online fallback's case.
 
 ### Roles
 
