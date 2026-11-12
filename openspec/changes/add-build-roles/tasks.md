@@ -62,7 +62,7 @@ Build step M3.2. Depends on `add-build-gates`. Unit tests run in `pnpm check` wi
 
 ### Roles
 
-- [ ] 2.12 Write the configs and prompts for `architect`, `design-reviewer`, `planner`, `test-author` and `implementer`, following `design.md`. Unit tests pin each config's tools, writable globs, `runsIn`, model and budget.
+- [ ] 2.12 Write the configs and prompts for `architect`, `design-reviewer`, `planner`, `test-author` and `implementer`, following `design.md`. Unit tests pin each config's tools, writable globs, `runsIn`, model and budget. A unit test lints sample stubs, one sync and one async with `_` parameters, as under `app/domain/src/`, with the repo's ESLint config and expects no errors; the same stub under `factory/` still fails.
 - [ ] 2.13 Live tests (`pnpm test:live`), each on a small fixture change in a temp repo, each under $0.50, in api-key mode. Record the cost of each here:
   - Architect output is complete
   - the design reviewer returns a result that parses (one run on a design with a planted contradiction, expected `changes-requested`)

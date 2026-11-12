@@ -13,5 +13,16 @@ export default tseslint.config(
       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
     },
   },
+  // Agent-written app code: an unused parameter or variable named `_x` is deliberate, as in
+  // the test author's stubs (add-build-roles). Factory code keeps the default rule.
+  {
+    files: ["app/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { args: "after-used", argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+      ],
+    },
+  },
   { files: ["**/*.js"], ...tseslint.configs.disableTypeChecked },
 );

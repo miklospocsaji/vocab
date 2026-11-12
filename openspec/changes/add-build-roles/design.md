@@ -81,7 +81,7 @@ Prompts (`factory/roles/<role>.md`) follow the proposal author's structure: who 
 - **Architect:** design what the delta specs require and no more. List the contracts changed and the decisions that need an ADR. Never edit specs or tasks.
 - **Design reviewer:** check the design against the delta specs, `openspec/specs/` and the contracts. Request changes only for a blocker or major finding.
 - **Planner:** every task fits one implementer session. Every scenario belongs to a task. On a re-plan, leave ticked tasks alone.
-- **Test author:** name each test `it("Scenario: <exact title>", …)`. Stub any new source file the tests import, with the signatures from the contracts or the design, bodies throwing `new Error("not implemented")`, and parameters prefixed `_` so lint passes. Make the tests fail at run time, never at load.
+- **Test author:** name each test `it("Scenario: <exact title>", …)`. Stub any new source file the tests import, with the signatures from the contracts or the design, bodies throwing `new Error("not implemented")`, and parameters prefixed `_`, which the app's lint config allows. Stub an async function without `async`, returning `Promise.reject(new Error("not implemented"))`, so `require-await` passes. Make the tests fail at run time, never at load.
 - **Implementer:** make this task's tests pass without editing them. Run `pnpm exec vitest run`, `pnpm typecheck` and `pnpm lint` before returning. If the tests or the design look wrong, say so in `notes` rather than work around them.
 
 ### The failure classifier (decided by the owner, 2026-11-09)
@@ -143,6 +143,7 @@ The CLI runs the build container with `docker run --rm`, using the locally built
 
 - **The SDK with the sandbox off.** No live test has run Bash with `sandbox.enabled: false` yet. The live test "Non-allowlisted command is denied" runs again in the build container, along with a new probe for compound commands (`pnpm lint && curl …`).
 - **Budgets.** A task costs a test author and an implementer session plus retries, at up to $2.50 per try. The importer's plan might hold five tasks. The caps are per attempt, so the real spend has to be measured. `add-build-loop` records it in M3.3, before the exit run.
+- **Stubs and lint.** The red gate runs `pnpm lint`, and `strictTypeChecked` flags unused parameters by default, `_` names included. `eslint.config.js` therefore allows `_` names for unused parameters, variables and caught errors under `app/**/*.ts` only (owner, 2026-11-12); factory code keeps the default rule. A unit test in task 2.12 lints sample stubs to pin it.
 - **Image size and start-up.** The `build` target adds the dev dependencies and a pnpm store to the worker's roughly 1 GB. Task 2.11 measures it.
 
 ## Contracts
