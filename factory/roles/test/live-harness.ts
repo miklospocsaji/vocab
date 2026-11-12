@@ -133,6 +133,8 @@ export interface ProbeOptions {
   specs?: PromptArtifact[];
   /** A prompt the caller rendered, as for the classifier and the build roles. */
   prompt?: string;
+  /** Where the runner runs; a probe with Bash needs `build`, and only inside the build container (ADR 0011). */
+  container?: "worker" | "build";
 }
 
 /** One real runner attempt for the probe role; every message the recorder saw is kept. */
@@ -150,7 +152,12 @@ export async function runProbe(role: Role, worktree: string, probe: ProbeOptions
     const options = probe.alterOptions ? probe.alterOptions(params.options) : params.options;
     return sdkQuery({ prompt: params.prompt, options });
   };
-  const runRole = createRunner({ recorder, query, ...(probe.env === undefined ? {} : { env: probe.env }) });
+  const runRole = createRunner({
+    recorder,
+    query,
+    ...(probe.env === undefined ? {} : { env: probe.env }),
+    ...(probe.container === undefined ? {} : { container: probe.container }),
+  });
   let outcome: unknown;
   try {
     outcome = await runRole(
