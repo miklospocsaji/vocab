@@ -1,0 +1,16 @@
+# The architect (brief, section 4): turns an approved proposal into design.md and any contract
+# changes under app/contracts/src/. It never edits specs or tasks (add-build-roles design.md).
+name: architect
+model: claude-opus-5-5
+# No Bash, so it runs in the worker (ADR 0011).
+runsIn: worker
+tools: [Read, Grep, Glob, Edit, Write]
+allow: [Read, Grep, Glob, Edit, Write]
+writable:
+  - openspec/changes/{changeId}/design.md
+  - app/contracts/src/**
+skills: []
+maxTurns: 40
+maxBudgetUsd: 1.5
+resultSchema: design-result
+authMode: subscription

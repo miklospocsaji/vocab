@@ -328,6 +328,7 @@ async function approvals(): Promise<ApprovalRow[]> {
   return rows.map((row) => ({
     id: row.id,
     workItemId: workItem.id,
+    kind: "proposal",
     state: row.state as ApprovalRow["state"],
     taskToken: row.task_token,
     requestedAt: new Date(0),

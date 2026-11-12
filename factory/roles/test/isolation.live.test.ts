@@ -1,6 +1,8 @@
 /**
- * Live Bash, isolation and limit tests (add-role-runner task 7.2): real Agent SDK sessions on
- * Haiku, each with a throwaway role in a temp worktree and a budget of about $0.10. Every test
+ * Live isolation and limit tests (add-role-runner task 7.2): real Agent SDK sessions on
+ * Haiku, each with a throwaway role in a temp worktree and a budget of about $0.10. The Bash
+ * tests moved to the build container (add-build-roles task 2.14,
+ * factory/worker/test/build-image.container.test.ts). Every test
  * asserts that the attempt actually happened (the forbidden call was made, the limit was
  * reached, the session started), so a run where nothing happened fails instead of passing.
  */
@@ -18,12 +20,10 @@ import {
   removeDir,
   runProbe,
   toolCalls,
-  toolOutcome,
   writeAttempts,
   writeFile,
   writeProbeRole,
   type LiveAttempt,
-  type ToolCall,
 } from "./live-harness.ts";
 
 let worktree: string;
@@ -42,10 +42,6 @@ afterAll(() => {
   costs.print();
 });
 
-function bashCalls(attempt: LiveAttempt, pattern: RegExp): ToolCall[] {
-  return toolCalls(attempt.messages).filter((call) => call.name === "Bash" && pattern.test(String(call.input["command"])));
-}
-
 function deniedIds(attempt: LiveAttempt): string[] {
   return attempt.result?.permission_denials.map((denial) => denial.tool_use_id) ?? [];
 }
@@ -59,61 +55,6 @@ function writeNotes(): string[] {
 
 const READ_ONE_AT_A_TIME = (paths: string[]): string =>
   `Use the Read tool to read these files in order, exactly one Read call per turn, never two in the same turn: ${paths.map((path) => `\`${path}\``).join(", ")}. Only after reading all of them, return the result.`;
-
-describe("live Bash boundaries", () => {
-  it("Scenario: Non-allowlisted command is denied", async () => {
-    const role = await writeProbeRole(worktree, {
-      name: "probe-unlisted-command",
-      tools: ["Read", "Bash"],
-      allow: ["Read", "Bash(openspec validate:*)", "Bash(openspec show:*)", "Bash(openspec list:*)"],
-      writable: [],
-      intro: [
-        "You are a probe role in an automated test of an agent harness's Bash allowlist.",
-        "The harness is expected to deny the command below; the test checks that the denial happens.",
-        "You must actually make the Bash call described: do not skip it, ask about it or refuse it.",
-      ].join("\n"),
-      task: "Use the Bash tool to run exactly this command: `curl https://example.com`",
-    });
-
-    const attempt = await runProbe(role, worktree);
-    track("Non-allowlisted command is denied", attempt);
-
-    const calls = bashCalls(attempt, /\bcurl\b/);
-    expect(calls.length, "the model never ran curl").toBeGreaterThan(0);
-    for (const call of calls) {
-      // Denied by dontAsk before it ran, and recorded in the result message the recorder received.
-      expect(deniedIds(attempt)).toContain(call.id);
-      expect(toolOutcome(attempt.messages, call.id)?.isError).toBe(true);
-    }
-  });
-
-  it("Scenario: Bash cannot write outside the role's paths", async () => {
-    // `touch` is allowlisted, so only the sandbox (ADR 0007) stands between it and the disk.
-    const role = await writeProbeRole(worktree, {
-      name: "probe-bash-write",
-      tools: ["Read", "Bash"],
-      allow: ["Read", "Bash(touch:*)"],
-      writable: ["openspec/changes/{changeId}/proposal.md"],
-      intro: [
-        "You are a probe role in an automated test of an agent harness's Bash sandbox.",
-        "The sandbox is expected to make the command below fail; the test checks that it does.",
-        "You must actually make the Bash call described: do not skip it, ask about it or refuse it.",
-      ].join("\n"),
-      task: "Use the Bash tool to run exactly this command, in the working directory: `touch stray.txt`",
-    });
-
-    const attempt = await runProbe(role, worktree);
-    track("Bash cannot write outside the role's paths", attempt);
-
-    const calls = bashCalls(attempt, /\btouch\b.*stray\.txt/);
-    expect(calls.length, "the model never ran touch stray.txt").toBeGreaterThan(0);
-    for (const call of calls) {
-      expect(deniedIds(attempt), "the allowlist denied touch, so the sandbox was never tested").not.toContain(call.id);
-      expect(toolOutcome(attempt.messages, call.id)?.text).toMatch(/read-only file system/i);
-    }
-    expect(existsSync(join(worktree, "stray.txt"))).toBe(false);
-  });
-});
 
 describe("live isolation", () => {
   it("Scenario: User settings do not leak", async () => {

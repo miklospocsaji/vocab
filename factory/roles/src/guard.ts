@@ -1,7 +1,8 @@
 /**
  * The `PreToolUse` guards on a role's file tools. The path guard, for Edit, Write and
  * NotebookEdit, denies any target that, resolved against the worktree with symlinks followed,
- * falls outside the role's writable globs or outside the worktree. The read guard does the
+ * falls outside the role's writable globs (`isWritable`, shared with the diff check) or outside
+ * the worktree. The read guard does the
  * same for Read, Grep and Glob against the worktree alone. Allowed calls are left to the SDK
  * permission rules.
  */
@@ -15,7 +16,7 @@ export interface PathGuardOptions {
   role: string;
   /** The work item's worktree; targets resolve against it. */
   worktree: string;
-  /** Globs relative to the worktree, with `{changeId}` already filled in. */
+  /** Globs relative to the worktree, from `writableFor`; a `!` glob excludes what it matches. */
   writable: string[];
 }
 
@@ -39,7 +40,7 @@ export function createPathGuard(options: PathGuardOptions): HookCallback {
     if (!isInside(root, real)) return deny(`${target} resolves outside the worktree`);
 
     const path = relative(root, real).split(sep).join("/");
-    if (!writable.some((glob) => minimatch(path, glob, { dot: true }))) {
+    if (!isWritable(path, writable)) {
       return deny(`${target} is outside the role's writable paths`);
     }
     return {};
@@ -141,4 +142,15 @@ async function realTarget(path: string): Promise<string | undefined> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+}
+
+/**
+ * The one matcher for a role's writable globs, used by the path guard and the diff check: a
+ * worktree-relative path is writable when it matches some glob and no `!` exclusion, whatever
+ * their order.
+ */
+export function isWritable(path: string, globs: readonly string[]): boolean {
+  const matches = (glob: string): boolean => minimatch(path, glob, { dot: true });
+  const excluded = globs.some((glob) => glob.startsWith("!") && matches(glob.slice(1)));
+  return !excluded && globs.some((glob) => !glob.startsWith("!") && matches(glob));
 }

@@ -19,8 +19,20 @@ export interface RecordedRequest {
   method: string;
   /** The path, decoded, without the base URL or query. */
   path: string;
+  /** The query parameters, decoded. */
+  query: Record<string, string>;
   authorization: string | null;
   body: unknown;
+}
+
+export interface ApiPullRequest {
+  number: number;
+  /** The head branch, in the same repository. */
+  head: string;
+  base: string;
+  title: string;
+  body: string;
+  state: "open" | "closed";
 }
 
 export interface FakeGitHubApp {
@@ -64,12 +76,15 @@ export class FakeGitHubApi {
   readonly comments = new Map<number, string[]>();
   /** Branch name to head sha. */
   readonly branches = new Map<string, string>();
+  /** Pull requests, in the order they were opened. */
+  readonly pullRequests: ApiPullRequest[] = [];
   /** The installation tokens issued so far, in order. */
   readonly issuedTokens: IssuedToken[] = [];
   intercept: Intercept | undefined;
 
   readonly #options: FakeGitHubApiOptions;
   #nextCommentId = 1;
+  #nextPullNumber = 100;
 
   constructor(options: FakeGitHubApiOptions) {
     this.#options = options;
@@ -85,6 +100,7 @@ export class FakeGitHubApi {
     const recorded: RecordedRequest = {
       method: request.method,
       path: decodeURIComponent(url.pathname),
+      query: Object.fromEntries(url.searchParams),
       authorization: request.headers.get("authorization"),
       body: text === "" ? undefined : (JSON.parse(text) as unknown),
     };
@@ -160,7 +176,45 @@ export class FakeGitHubApi {
       return json(201, { ref: full, object: { sha, type: "commit" } });
     }
 
+    if (route === "POST /pulls") {
+      const { head, base, title, body } = request.body as { head?: unknown; base?: unknown; title?: unknown; body?: unknown };
+      if (typeof head !== "string" || typeof base !== "string" || typeof title !== "string") return json(422, { message: "Validation Failed" });
+      // Same-repository heads only, as the factory opens them; `owner:branch` names the same thing.
+      const branch = head.startsWith(`${owner}:`) ? head.slice(owner.length + 1) : head;
+      if (!this.branches.has(branch) || !this.branches.has(base)) {
+        return json(422, { message: "Validation Failed", errors: [{ resource: "PullRequest", field: "head", code: "invalid" }] });
+      }
+      if (this.pullRequests.some((pr) => pr.head === branch && pr.state === "open")) {
+        return json(422, { message: "Validation Failed", errors: [{ resource: "PullRequest", code: "custom", message: `A pull request already exists for ${owner}:${branch}.` }] });
+      }
+      const pr: ApiPullRequest = { number: this.#nextPullNumber++, head: branch, base, title, body: typeof body === "string" ? body : "", state: "open" };
+      this.pullRequests.push(pr);
+      return json(201, this.#pullJson(pr));
+    }
+
+    if (route === "GET /pulls") {
+      const head = request.query["head"];
+      const state = request.query["state"] ?? "open";
+      const matches = this.pullRequests.filter(
+        (pr) => (head === undefined || `${owner}:${pr.head}` === head) && (state === "all" || pr.state === state),
+      );
+      return json(200, matches.map((pr) => this.#pullJson(pr)));
+    }
+
     return notFound();
+  }
+
+  #pullJson(pr: ApiPullRequest): Record<string, unknown> {
+    const { owner, repo } = this.#options;
+    return {
+      number: pr.number,
+      html_url: `https://github.com/${owner}/${repo}/pull/${String(pr.number)}`,
+      state: pr.state,
+      title: pr.title,
+      body: pr.body === "" ? null : pr.body,
+      head: { ref: pr.head, label: `${owner}:${pr.head}` },
+      base: { ref: pr.base, label: `${owner}:${pr.base}` },
+    };
   }
 
   /** The fixed token, or an installation token that has not expired. */

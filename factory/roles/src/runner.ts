@@ -1,16 +1,18 @@
 /**
  * Runs one attempt of a role as an Agent SDK session: the role's tools, `dontAsk`
- * permissions, project-only settings, the path and read guards, the Bash sandbox (ADR 0007)
- * and a child env built from an allowlist, with only the effective auth mode's credential
- * (ADR 0006). Every message goes to the Recorder. Anything but a valid result and a valid
- * change is an AttemptFailed.
+ * permissions, project-only settings, the path and read guards, and a child env built from an
+ * allowlist, with only the effective auth mode's credential (ADR 0006). Worker roles get the Bash
+ * sandbox of ADR 0007. Build roles run only in the build container, with the sandbox off; their
+ * write boundary is the diff check after the session (ADR 0011). Every message goes to the
+ * Recorder. Anything but a valid result and, for a role that writes, a valid change is an
+ * AttemptFailed.
  */
 import { execFile } from "node:child_process";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { query as sdkQuery, type Options, type SDKMessage, type SDKResultMessage } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
-import { writableFor, type Role, type RoleConfig } from "./config.ts";
+import { DENY_LIST, RoleConfigError, writableFor, type Role, type RoleConfig } from "./config.ts";
 import { createPathGuard, createReadGuard } from "./guard.ts";
 import { renderPrompt, type PromptArtifact, type PromptIssue, type RetryEvidence } from "./prompt.ts";
 
@@ -67,6 +69,10 @@ export interface WorkItem {
   issue: PromptIssue;
   changeFiles: PromptArtifact[];
   specs: PromptArtifact[];
+  /** The task's new source files, for a role whose globs hold `{taskStubs}`. */
+  taskStubs?: readonly string[];
+  /** A prompt the caller rendered, for roles whose input is not the issue (build roles, the classifier). */
+  prompt?: string;
 }
 
 /** The shape of the SDK's `query`, so tests can inject a stub. */
@@ -78,28 +84,35 @@ export interface RunnerOptions {
   query?: QueryFn;
   /** The parent env the child env is built from; defaults to `process.env`. */
   env?: Record<string, string | undefined>;
+  /** Where this runner runs; defaults to the worker. Only the build entry point passes `build` (ADR 0011). */
+  container?: "worker" | "build";
 }
 
 /** Resolves to the role's parsed result; rejects with AttemptFailed. */
 export type RunRole = (role: Role, item: WorkItem, evidence?: RetryEvidence) => Promise<unknown>;
 
 export function createRunner(options: RunnerOptions): RunRole {
-  const { recorder, query = sdkQuery, env = process.env } = options;
+  const { recorder, query = sdkQuery, env = process.env, container = "worker" } = options;
 
   return async (role, item, evidence) => {
+    if (role.runsIn === "build" && container !== "build") {
+      throw new RoleConfigError(role.name, "runsIn", `role ${role.name} runs only in the build container`);
+    }
     const authMode = effectiveAuthMode(role, env);
     const auth = AUTH[authMode];
     const baseEnv = childEnv(env);
     const credential = env[auth.credential];
     const abortController = new AbortController();
     const session = query({
-      prompt: renderPrompt(evidence === undefined ? item : { ...item, evidence }),
+      prompt: item.prompt ?? renderPrompt(evidence === undefined ? item : { ...item, evidence }),
       options: {
         cwd: item.worktree,
         model: role.model,
         systemPrompt: role.prompt,
         tools: role.tools.filter((tool) => !isAgentTool(tool)),
         allowedTools: role.allow.filter((rule) => !isAgentTool(rule)),
+        // Whatever the allowlist: git push, network and install commands (design.md).
+        disallowedTools: [...DENY_LIST],
         permissionMode: "dontAsk",
         settingSources: ["project"],
         skills: role.skills,
@@ -111,7 +124,7 @@ export function createRunner(options: RunnerOptions): RunRole {
           PreToolUse: [
             {
               matcher: "Edit|Write|NotebookEdit",
-              hooks: [createPathGuard({ role: role.name, worktree: item.worktree, writable: writableFor(role, item.changeId) })],
+              hooks: [createPathGuard({ role: role.name, worktree: item.worktree, writable: writableFor(role, item.changeId, item.taskStubs) })],
             },
             {
               matcher: "Read|Grep|Glob",
@@ -119,15 +132,7 @@ export function createRunner(options: RunnerOptions): RunRole {
             },
           ],
         },
-        // ADR 0007: Bash cannot write anywhere in the worktree; files change only through the guarded tools.
-        sandbox: {
-          enabled: true,
-          failIfUnavailable: true,
-          // The SDK default (true) auto-approves every sandboxed command and bypasses the role's Bash allowlist.
-          autoAllowBashIfSandboxed: false,
-          allowUnsandboxedCommands: false,
-          filesystem: { denyWrite: [item.worktree] },
-        },
+        sandbox: sandboxFor(role, item),
         env: credential === undefined ? baseEnv : { ...baseEnv, [auth.credential]: credential },
         abortController,
       },
@@ -161,8 +166,26 @@ export function createRunner(options: RunnerOptions): RunRole {
     const parsed = role.schema.safeParse(result.structured_output);
     if (!parsed.success) throw new AttemptFailed("invalid-result", z.prettifyError(parsed.error));
 
-    await validateChange(item, baseEnv);
+    // A role that writes nothing cannot have broken the change.
+    if (role.writable.length > 0) await validateChange(item, baseEnv);
     return parsed.data;
+  };
+}
+
+/**
+ * Worker roles: ADR 0007's sandbox, so Bash cannot write anywhere in the worktree and files change
+ * only through the guarded tools. Build roles: off, set explicitly, since bubblewrap cannot start
+ * on Fargate; the diff check is their write boundary (ADR 0011).
+ */
+function sandboxFor(role: Role, item: WorkItem): NonNullable<Options["sandbox"]> {
+  if (role.runsIn === "build") return { enabled: false };
+  return {
+    enabled: true,
+    failIfUnavailable: true,
+    // The SDK default (true) auto-approves every sandboxed command and bypasses the role's Bash allowlist.
+    autoAllowBashIfSandboxed: false,
+    allowUnsandboxedCommands: false,
+    filesystem: { denyWrite: [item.worktree] },
   };
 }
 

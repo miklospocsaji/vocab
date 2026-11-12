@@ -22,6 +22,7 @@ import {
   approve,
   approved,
   awaitApproval,
+  changeFileReader,
   ensureWorktree,
   escalateWorkItem,
   intake,
@@ -143,9 +144,8 @@ async function runState(args: WorkerArgs, deps: WorkerDeps): Promise<number> {
       break;
     }
     case "approved": {
-      const workItem = await approved({ db, forge }, await requireWorkItem(db, issueNumber));
-      deps.out(`factory-worker: approved for ${issue}: work item ${workItem.changeId} is ${workItem.state}\n`);
-      return WORKER_EXIT.ok;
+      const transition = await approved({ db, forge, readChangeFile: (item, path) => readChangeFile(item, path, deps) }, await requireWorkItem(db, issueNumber));
+      return report(state, issueNumber, transition, deps);
     }
     case "escalate": {
       if (args.reason === undefined) throw new InvalidInput("escalate needs --reason");
@@ -160,6 +160,12 @@ async function requireWorkItem(db: pg.Pool, issueNumber: number): Promise<WorkIt
   const workItem = await findWorkItemByIssue(db, issueNumber);
   if (workItem === undefined) throw new InvalidInput(`issue #${String(issueNumber)} has no work item; run intake first`);
   return workItem;
+}
+
+/** A file of the pushed change folder, from a fresh clone and the work item's worktree; undefined if it is absent. */
+async function readChangeFile(workItem: WorkItemRow, path: string, deps: WorkerDeps): Promise<string | undefined> {
+  const repo = await freshClone(deps);
+  return changeFileReader({ repo, home: deps.home })(workItem, path);
 }
 
 /** The pushed `proposal.md`, from a fresh clone and the work item's worktree; undefined if it cannot be read. */

@@ -17,6 +17,7 @@
     "test:cloud": "vitest run --project cloud",
     "db:up": "docker compose up -d --wait ledger",
     "factory": "node factory/cli/src/main.ts",
+    "gates": "node factory/gates/src/cli.ts",
     "infra:synth": "pnpm --dir infra exec cdk synth",
     "infra:diff": "pnpm --dir infra exec cdk diff",
     "infra:deploy": "pnpm --dir infra exec cdk deploy"

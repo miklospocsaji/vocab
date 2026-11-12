@@ -1,0 +1,9 @@
+{
+  "name": "gates-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "node probe-env.js typecheck && tsc -p .",
+    "lint": "node probe-env.js lint && eslint ."
+  }
+}

@@ -27,6 +27,7 @@ describeForgeContract("FakeForge", () => {
     },
     comments: (n) => forge.comments.filter((c) => c.issueNumber === n).map((c) => c.body),
     branchSha: (branch) => forge.branchSha(branch),
+    pullRequests: () => forge.pullRequests.map(({ head, base, title, body }) => ({ head, base, title, body })),
   };
 });
 
@@ -75,6 +76,7 @@ describe("FakeForge with a git remote", () => {
           return undefined;
         }
       },
+      pullRequests: () => forge.pullRequests.map(({ head, base, title, body }) => ({ head, base, title, body })),
     };
   });
 });

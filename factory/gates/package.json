@@ -1,0 +1,15 @@
+{
+  "name": "@vocab/factory-gates",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p ."
+  },
+  "dependencies": {
+    "@vocab/factory-artifacts": "workspace:*",
+    "zod": "4.6.7"
+  }
+}

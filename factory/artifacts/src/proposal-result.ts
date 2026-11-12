@@ -12,11 +12,15 @@ export const CAPABILITIES = [
   "gates",
 ] as const;
 
+/** A change's `x-complexity` in `.openspec.yaml`, which routes it after Proposal approval. */
+export const Complexity = z.enum(["small", "medium", "large"]);
+export type Complexity = z.infer<typeof Complexity>;
+
 /** The proposal author's result (add-role-runner design.md). */
 export const ProposalResult = z.strictObject({
   changeId: z.string().regex(/^[a-z][a-z0-9]*(-[a-z0-9]+)+$/, "a verb-led kebab-case id"),
   capabilities: z.array(z.enum(CAPABILITIES)).min(1),
-  complexity: z.enum(["small", "medium", "large"]),
+  complexity: Complexity,
   summary: z.string().min(1),
   openQuestions: z.array(z.string()),
 });

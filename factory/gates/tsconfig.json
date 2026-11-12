@@ -1,0 +1,6 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["src", "test"],
+  // The fixture worktrees are small projects of their own, some broken on purpose.
+  "exclude": ["test/fixtures"]
+}

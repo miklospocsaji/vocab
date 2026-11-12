@@ -40,6 +40,7 @@ describeForgeContract("GitHubForge", () => {
     setBranch: (branch, sha) => api.branches.set(branch, sha),
     comments: (n) => api.comments.get(n) ?? [],
     branchSha: (branch) => api.branches.get(branch),
+    pullRequests: () => api.pullRequests.map(({ head, base, title, body }) => ({ head, base, title, body })),
   };
 });
 
@@ -96,6 +97,34 @@ describe("GitHubForge", () => {
     };
 
     expect(await forge.createBranch("add-x")).toEqual({ created: false, sha: racedSha });
+  });
+
+  it("opens pull requests and finds open ones by head through the pulls endpoints", async () => {
+    const { api, forge } = setup();
+    api.branches.set("add-x", "3333333333333333333333333333333333333333");
+
+    await forge.findPullRequest("add-x");
+    await forge.openPullRequest({ head: "add-x", base: DEFAULT_BRANCH, title: "add-x", body: "Closes #12" });
+    const found = await forge.findPullRequest("add-x");
+
+    expect(api.requests.map((r) => `${r.method} ${r.path}`)).toEqual([
+      `GET /repos/${OWNER}/${REPO}/pulls`,
+      `POST /repos/${OWNER}/${REPO}/pulls`,
+      `GET /repos/${OWNER}/${REPO}/pulls`,
+    ]);
+    expect(api.requests[0]?.query).toMatchObject({ head: `${OWNER}:add-x`, state: "open" });
+    expect(api.requests[1]?.body).toEqual({ head: "add-x", base: DEFAULT_BRANCH, title: "add-x", body: "Closes #12" });
+    expect(api.requests.every((r) => r.authorization === `token ${TOKEN}`)).toBe(true);
+    expect(found).toEqual({ number: 100, url: `https://github.com/${OWNER}/${REPO}/pull/100`, head: "add-x", base: DEFAULT_BRANCH, title: "add-x", body: "Closes #12" });
+  });
+
+  it("finds no pull request once the open one is closed", async () => {
+    const { api, forge } = setup();
+    api.branches.set("add-x", "3333333333333333333333333333333333333333");
+    await forge.openPullRequest({ head: "add-x", base: DEFAULT_BRANCH, title: "add-x", body: "" });
+    for (const pr of api.pullRequests) pr.state = "closed";
+
+    expect(await forge.findPullRequest("add-x")).toBeUndefined();
   });
 
   it("rejects a pull request number as not-found, since it is not an issue", async () => {

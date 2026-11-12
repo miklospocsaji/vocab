@@ -77,13 +77,6 @@ describe("live boundaries in the factory-worker container", () => {
     expectPassed(config, 1);
   });
 
-  it("Scenario: Missing sandbox blocks Bash", () => {
-    // bubblewrap is in the image (ADR 0010), so only the namespaces it cannot create stop it.
-    expect(inContainer("sh", "-c", "command -v bwrap").output.trim()).toBe("/usr/bin/bwrap");
-
-    expectPassed(vitest("--project", "container", "--testNamePattern", "Scenario: Missing sandbox blocks Bash$"), 1);
-  });
-
   it("runs the Grep tool in the image without a system ripgrep", () => {
     expect(inContainer("sh", "-c", "command -v rg || echo none").output.trim()).toBe("none");
     expectPassed(vitest("--project", "container", "--testNamePattern", "runs the Grep tool without a system ripgrep$"), 1);

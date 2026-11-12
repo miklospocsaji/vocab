@@ -2,11 +2,14 @@
  * Typed queries over the ledger. Ids are Postgres bigints, returned as strings; costs are
  * `numeric`, returned as numbers.
  */
-import type { FailureReason } from "@vocab/factory-roles";
+import type { FailureReason as RoleFailureReason } from "@vocab/factory-roles";
+import pg from "pg";
 import type { Db } from "./db.ts";
 import type { TokenUsage } from "./recorder.ts";
 
 export type AuthMode = "api-key" | "subscription";
+/** Why an attempt failed: a runner reason, a build reason, or a build task that left no outcome. */
+export type FailureReason = RoleFailureReason | "diff-check" | "red" | "green" | "no-outcome";
 export type AttemptOutcome = "succeeded" | "failed";
 
 export interface WorkItemRow {
@@ -17,6 +20,8 @@ export interface WorkItemRow {
   state: string;
   /** The Step Functions execution that created it; null for a local run. */
   executionArn: string | null;
+  /** How many times the build loop sent the change back to Design. */
+  designFlaws: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,23 +47,37 @@ export interface AttemptRow {
   failureReason: FailureReason | null;
   authMode: AuthMode | null;
   costUsdEstimate: number | null;
-  /** The role's validated result, on a succeeded attempt only (until M3 moves results to S3). */
+  /** The role's validated result, on a succeeded attempt only. */
   result: unknown;
+  /** The plan task a build attempt is for; null outside the build loop. */
+  taskId: string | null;
+  /** The artifact store prefix of a build attempt's input and outputs. */
+  storePrefix: string | null;
+  /** The failure classifier's label for a failed build attempt. */
+  classification: unknown;
+  /** The gates result of a build attempt. */
+  gates: unknown;
 }
 
 export interface NewAttempt {
   workItemId: string;
   state: string;
   role: string;
+  taskId?: string;
+  storePrefix?: string;
 }
 
-export type AttemptEnd = { outcome: "succeeded"; result?: unknown } | { outcome: "failed"; failureReason: FailureReason };
+export type AttemptEnd =
+  | { outcome: "succeeded"; result?: unknown; gates?: unknown }
+  | { outcome: "failed"; failureReason: FailureReason; gates?: unknown };
 
 export type ApprovalState = "open" | "closed";
+export type ApprovalKind = "proposal" | "design";
 
 export interface ApprovalRow {
   id: string;
   workItemId: string;
+  kind: ApprovalKind;
   state: ApprovalState;
   taskToken: string;
   requestedAt: Date;
@@ -70,6 +89,45 @@ export interface ApprovalRow {
 export interface NewApproval {
   workItemId: string;
   taskToken: string;
+  /** Defaults to `proposal`. */
+  kind?: ApprovalKind;
+}
+
+export type TaskStatus = "pending" | "done" | "superseded";
+
+/** One task of a plan, as the planner's `tasks.json` lists it. */
+export interface PlanTaskInput {
+  id: string;
+  title: string;
+  dependsOn: readonly string[];
+  files: readonly string[];
+  scenarios: readonly string[];
+  tests: readonly string[];
+}
+
+export interface TaskRow {
+  id: string;
+  workItemId: string;
+  /** The id in `tasks.md`, such as `1.2`. */
+  taskId: string;
+  /** 1-based, in the plan's order. */
+  position: number;
+  title: string;
+  dependsOn: string[];
+  files: string[];
+  scenarios: string[];
+  tests: string[];
+  status: TaskStatus;
+  /** The commit that ticked it. */
+  doneCommit: string | null;
+  /** The planner attempt whose plan it came from. */
+  planAttemptId: string;
+}
+
+export interface NewPlan {
+  workItemId: string;
+  planAttemptId: string;
+  tasks: readonly PlanTaskInput[];
 }
 
 export interface MessageRow {
@@ -126,6 +184,7 @@ interface WorkItemRecord {
   branch: string;
   state: string;
   execution_arn: string | null;
+  design_flaws: number;
   created_at: Date;
   updated_at: Date;
 }
@@ -143,16 +202,36 @@ interface AttemptRecord {
   auth_mode: AuthMode | null;
   cost_usd_estimate: string | null;
   result: unknown;
+  task_id: string | null;
+  store_prefix: string | null;
+  classification: unknown;
+  gates: unknown;
 }
 
 interface ApprovalRecord {
   id: string;
   work_item_id: string;
+  kind: ApprovalKind;
   state: ApprovalState;
   task_token: string;
   requested_at: Date;
   resolved_at: Date | null;
   resolved_by: string | null;
+}
+
+interface TaskRecord {
+  id: string;
+  work_item_id: string;
+  task_id: string;
+  position: number;
+  title: string;
+  depends_on: string[];
+  files: string[];
+  scenarios: string[];
+  tests: string[];
+  status: TaskStatus;
+  done_commit: string | null;
+  plan_attempt_id: string;
 }
 
 interface MessageRecord {
@@ -167,10 +246,11 @@ interface MessageRecord {
   raw: unknown;
 }
 
-const WORK_ITEM_COLUMNS = "id, issue_number, change_id, branch, state, execution_arn, created_at, updated_at";
+const WORK_ITEM_COLUMNS = "id, issue_number, change_id, branch, state, execution_arn, design_flaws, created_at, updated_at";
 const ATTEMPT_COLUMNS =
-  "id, work_item_id, state, role, n, started_at, ended_at, outcome, failure_reason, auth_mode, cost_usd_estimate, result";
-const APPROVAL_COLUMNS = "id, work_item_id, state, task_token, requested_at, resolved_at, resolved_by";
+  "id, work_item_id, state, role, n, started_at, ended_at, outcome, failure_reason, auth_mode, cost_usd_estimate, result, task_id, store_prefix, classification, gates";
+const APPROVAL_COLUMNS = "id, work_item_id, kind, state, task_token, requested_at, resolved_at, resolved_by";
+const TASK_COLUMNS = "id, work_item_id, task_id, position, title, depends_on, files, scenarios, tests, status, done_commit, plan_attempt_id";
 
 function toWorkItem(row: WorkItemRecord): WorkItemRow {
   return {
@@ -180,6 +260,7 @@ function toWorkItem(row: WorkItemRecord): WorkItemRow {
     branch: row.branch,
     state: row.state,
     executionArn: row.execution_arn,
+    designFlaws: row.design_flaws,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -199,6 +280,27 @@ function toAttempt(row: AttemptRecord): AttemptRow {
     authMode: row.auth_mode,
     costUsdEstimate: row.cost_usd_estimate === null ? null : Number(row.cost_usd_estimate),
     result: row.result,
+    taskId: row.task_id,
+    storePrefix: row.store_prefix,
+    classification: row.classification,
+    gates: row.gates,
+  };
+}
+
+function toTask(row: TaskRecord): TaskRow {
+  return {
+    id: row.id,
+    workItemId: row.work_item_id,
+    taskId: row.task_id,
+    position: row.position,
+    title: row.title,
+    dependsOn: row.depends_on,
+    files: row.files,
+    scenarios: row.scenarios,
+    tests: row.tests,
+    status: row.status,
+    doneCommit: row.done_commit,
+    planAttemptId: row.plan_attempt_id,
   };
 }
 
@@ -220,6 +322,7 @@ function toApproval(row: ApprovalRecord): ApprovalRow {
   return {
     id: row.id,
     workItemId: row.work_item_id,
+    kind: row.kind,
     state: row.state,
     taskToken: row.task_token,
     requestedAt: row.requested_at,
@@ -279,10 +382,10 @@ export async function setWorkItemState(db: Db, workItemId: string, state: string
 /** Opens the next attempt for the work item's state, numbered from 1. */
 export async function openAttempt(db: Db, attempt: NewAttempt): Promise<AttemptRow> {
   const { rows } = await db.query<AttemptRecord>(
-    `INSERT INTO attempts (work_item_id, state, role, n)
-     SELECT $1, $2, $3, COALESCE(MAX(n), 0) + 1 FROM attempts WHERE work_item_id = $1 AND state = $2
+    `INSERT INTO attempts (work_item_id, state, role, n, task_id, store_prefix)
+     SELECT $1, $2, $3, COALESCE(MAX(n), 0) + 1, $4, $5 FROM attempts WHERE work_item_id = $1 AND state = $2
      RETURNING ${ATTEMPT_COLUMNS}`,
-    [attempt.workItemId, attempt.state, attempt.role],
+    [attempt.workItemId, attempt.state, attempt.role, attempt.taskId ?? null, attempt.storePrefix ?? null],
   );
   return toAttempt(only(rows, "openAttempt"));
 }
@@ -291,11 +394,12 @@ export async function openAttempt(db: Db, attempt: NewAttempt): Promise<AttemptR
 export async function closeAttempt(db: Db, attemptId: string, end: AttemptEnd): Promise<AttemptRow> {
   const failureReason = end.outcome === "failed" ? end.failureReason : null;
   const result = end.outcome === "succeeded" && end.result !== undefined ? JSON.stringify(end.result) : null;
+  const gates = end.gates === undefined ? null : JSON.stringify(end.gates);
   const { rows } = await db.query<AttemptRecord>(
-    `UPDATE attempts SET ended_at = clock_timestamp(), outcome = $2, failure_reason = $3, result = $4::jsonb
+    `UPDATE attempts SET ended_at = clock_timestamp(), outcome = $2, failure_reason = $3, result = $4::jsonb, gates = $5::jsonb
      WHERE id = $1 AND ended_at IS NULL
      RETURNING ${ATTEMPT_COLUMNS}`,
-    [attemptId, end.outcome, failureReason, result],
+    [attemptId, end.outcome, failureReason, result, gates],
   );
   if (rows[0] === undefined) throw new Error(`attempt ${attemptId} is not open`);
   return toAttempt(rows[0]);
@@ -366,8 +470,8 @@ export async function listAttemptUsage(db: Db, workItemId: string): Promise<Atte
 export async function openApproval(db: Db, approval: NewApproval): Promise<ApprovalRow> {
   try {
     const { rows } = await db.query<ApprovalRecord>(
-      `INSERT INTO approvals (work_item_id, state, task_token) VALUES ($1, 'open', $2) RETURNING ${APPROVAL_COLUMNS}`,
-      [approval.workItemId, approval.taskToken],
+      `INSERT INTO approvals (work_item_id, kind, state, task_token) VALUES ($1, $2, 'open', $3) RETURNING ${APPROVAL_COLUMNS}`,
+      [approval.workItemId, approval.kind ?? "proposal", approval.taskToken],
     );
     return toApproval(only(rows, "openApproval"));
   } catch (error) {
@@ -418,4 +522,95 @@ export async function reopenApproval(db: Db, approvalId: string): Promise<Approv
   }
   if (rows[0] === undefined) throw new Error(`approval ${approvalId} not found`);
   return toApproval(rows[0]);
+}
+
+
+/** The classifier's label for a build attempt; a missing attempt is an error. */
+export async function setAttemptClassification(db: Db, attemptId: string, classification: unknown): Promise<AttemptRow> {
+  const { rows } = await db.query<AttemptRecord>(`UPDATE attempts SET classification = $2::jsonb WHERE id = $1 RETURNING ${ATTEMPT_COLUMNS}`, [
+    attemptId,
+    JSON.stringify(classification),
+  ]);
+  if (rows[0] === undefined) throw new Error(`attempt ${attemptId} not found`);
+  return toAttempt(rows[0]);
+}
+
+/** Counts one more design flaw on the work item and returns it; a missing work item is an error. */
+export async function incrementDesignFlaws(db: Db, workItemId: string): Promise<WorkItemRow> {
+  const { rows } = await db.query<WorkItemRecord>(
+    `UPDATE work_items SET design_flaws = design_flaws + 1, updated_at = now() WHERE id = $1 RETURNING ${WORK_ITEM_COLUMNS}`,
+    [workItemId],
+  );
+  if (rows[0] === undefined) throw new Error(`work item ${workItemId} not found`);
+  return toWorkItem(rows[0]);
+}
+
+/**
+ * Stores an accepted plan's tasks and returns the work item's live tasks. The unfinished rows of
+ * an earlier plan are superseded; done rows stay as they are, and a plan entry with a done
+ * task's id keeps that row. Runs in one transaction.
+ */
+export async function storePlan(db: Db, plan: NewPlan): Promise<TaskRow[]> {
+  await inTransaction(db, async (client) => {
+    await client.query("UPDATE tasks SET status = 'superseded' WHERE work_item_id = $1 AND status = 'pending'", [plan.workItemId]);
+    const { rows } = await client.query<{ task_id: string }>("SELECT task_id FROM tasks WHERE work_item_id = $1 AND status = 'done'", [plan.workItemId]);
+    const done = new Set(rows.map((row) => row.task_id));
+    for (const [index, task] of plan.tasks.entries()) {
+      if (done.has(task.id)) continue;
+      await client.query(
+        `INSERT INTO tasks (work_item_id, task_id, position, title, depends_on, files, scenarios, tests, status, plan_attempt_id)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb, $8::jsonb, 'pending', $9)`,
+        [
+          plan.workItemId,
+          task.id,
+          index + 1,
+          task.title,
+          JSON.stringify(task.dependsOn),
+          JSON.stringify(task.files),
+          JSON.stringify(task.scenarios),
+          JSON.stringify(task.tests),
+          plan.planAttemptId,
+        ],
+      );
+    }
+  });
+  return listTasks(db, plan.workItemId);
+}
+
+/** The work item's live (not superseded) tasks, in plan order. */
+export async function listTasks(db: Db, workItemId: string): Promise<TaskRow[]> {
+  const { rows } = await db.query<TaskRecord>(
+    `SELECT ${TASK_COLUMNS} FROM tasks WHERE work_item_id = $1 AND status <> 'superseded' ORDER BY position, id`,
+    [workItemId],
+  );
+  return rows.map(toTask);
+}
+
+/** Marks a pending task done with the commit that ticked it; any other task is an error. */
+export async function markTaskDone(db: Db, workItemId: string, taskId: string, commit: string): Promise<TaskRow> {
+  const { rows } = await db.query<TaskRecord>(
+    `UPDATE tasks SET status = 'done', done_commit = $3 WHERE work_item_id = $1 AND task_id = $2 AND status = 'pending' RETURNING ${TASK_COLUMNS}`,
+    [workItemId, taskId, commit],
+  );
+  if (rows[0] === undefined) throw new Error(`task ${taskId} of work item ${workItemId} is not pending`);
+  return toTask(rows[0]);
+}
+
+/** Runs `fn` in a transaction: on a client of its own for a pool, or in the caller's for a client. */
+async function inTransaction(db: Db, fn: (client: pg.PoolClient | pg.Client) => Promise<void>): Promise<void> {
+  if (!(db instanceof pg.Pool)) {
+    await fn(db);
+    return;
+  }
+  const client = await db.connect();
+  try {
+    await client.query("BEGIN");
+    await fn(client);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

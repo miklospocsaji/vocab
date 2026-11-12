@@ -5,6 +5,8 @@
 # OpenSpec upgrade re-checks that text.
 name: proposal-author
 model: claude-opus-5-5
+# No Bash, so it runs in the worker (ADR 0011).
+runsIn: worker
 tools: [Read, Grep, Glob, Edit, Write, WebFetch]
 allow:
   - Read

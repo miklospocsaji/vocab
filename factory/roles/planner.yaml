@@ -1,0 +1,15 @@
+# The planner (brief, section 4): splits the design into tasks in tasks.md and returns them as
+# tasks.json, which validatePlan checks before it is accepted. Ticked tasks stay as they are.
+name: planner
+model: claude-sonnet-5-5
+# No Bash, so it runs in the worker (ADR 0011).
+runsIn: worker
+tools: [Read, Grep, Glob, Edit, Write]
+allow: [Read, Grep, Glob, Edit, Write]
+writable:
+  - openspec/changes/{changeId}/tasks.md
+skills: []
+maxTurns: 25
+maxBudgetUsd: 0.75
+resultSchema: plan-result
+authMode: subscription

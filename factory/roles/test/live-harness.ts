@@ -71,12 +71,14 @@ const DEFAULT_RULES = [
 
 /**
  * Writes a throwaway role into the worktree (`factory/roles/<name>.yaml` and
- * `.claude/agents/<name>.md`) and loads it with `loadRole`, as the factory would.
+ * `factory/roles/<name>.md`) and loads it with `loadRole`, as the factory would. A probe with
+ * Bash runs in the build container (ADR 0011); any other in the worker.
  */
 export async function writeProbeRole(worktree: string, probe: ProbeRole): Promise<Role> {
   const config: RoleConfig = {
     name: probe.name,
     model: LIVE_MODEL,
+    runsIn: probe.tools.includes("Bash") ? "build" : "worker",
     tools: probe.tools,
     allow: probe.allow,
     writable: probe.writable,
@@ -89,13 +91,8 @@ export async function writeProbeRole(worktree: string, probe: ProbeRole): Promis
   writeFile(worktree, `factory/roles/${probe.name}.yaml`, stringify(config));
   writeFile(
     worktree,
-    `.claude/agents/${probe.name}.md`,
+    `factory/roles/${probe.name}.md`,
     [
-      "---",
-      `name: ${probe.name}`,
-      "description: Throwaway role for a live boundary test.",
-      "---",
-      "",
       probe.intro ?? DEFAULT_INTRO,
       "",
       "Your task:",
@@ -132,6 +129,12 @@ export interface ProbeOptions {
   changeFiles?: PromptArtifact[];
   /** The previous attempt's failure, as the Proposal handler passes it on a retry. */
   evidence?: RetryEvidence;
+  /** The current specs of the affected capabilities; defaults to none. */
+  specs?: PromptArtifact[];
+  /** A prompt the caller rendered, as for the classifier and the build roles. */
+  prompt?: string;
+  /** Where the runner runs; a probe with Bash needs `build`, and only inside the build container (ADR 0011). */
+  container?: "worker" | "build";
 }
 
 /** One real runner attempt for the probe role; every message the recorder saw is kept. */
@@ -149,7 +152,12 @@ export async function runProbe(role: Role, worktree: string, probe: ProbeOptions
     const options = probe.alterOptions ? probe.alterOptions(params.options) : params.options;
     return sdkQuery({ prompt: params.prompt, options });
   };
-  const runRole = createRunner({ recorder, query, ...(probe.env === undefined ? {} : { env: probe.env }) });
+  const runRole = createRunner({
+    recorder,
+    query,
+    ...(probe.env === undefined ? {} : { env: probe.env }),
+    ...(probe.container === undefined ? {} : { container: probe.container }),
+  });
   let outcome: unknown;
   try {
     outcome = await runRole(
@@ -160,7 +168,8 @@ export async function runProbe(role: Role, worktree: string, probe: ProbeOptions
         worktree,
         issue: probe.issue ?? { title: "Boundary probe", body: "Follow your role instructions." },
         changeFiles: probe.changeFiles ?? [],
-        specs: [],
+        specs: probe.specs ?? [],
+        ...(probe.prompt === undefined ? {} : { prompt: probe.prompt }),
       },
       probe.evidence,
     );

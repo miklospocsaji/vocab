@@ -27,6 +27,15 @@ export interface ContractHarness {
   comments(issueNumber: number): string[];
   /** The branch head the forge holds, or undefined. */
   branchSha(branch: string): string | undefined;
+  /** The pull requests the forge holds, in the order they were opened. */
+  pullRequests(): ContractPullRequest[];
+}
+
+export interface ContractPullRequest {
+  head: string;
+  base: string;
+  title: string;
+  body: string;
 }
 
 export function describeForgeContract(name: string, setup: () => ContractHarness): void {
@@ -134,6 +143,52 @@ export function describeForgeContract(name: string, setup: () => ContractHarness
         const again = await h.forge.createBranch("add-import-kindle-vocab-db");
 
         expect(again).toEqual({ created: false, sha: h.defaultSha });
+      });
+    });
+
+    describe("pull requests", () => {
+      const opened: ContractPullRequest = {
+        head: "add-import-kindle-vocab-db",
+        base: "",
+        title: "add-import-kindle-vocab-db: Import Kindle vocab.db",
+        body: "Closes #12\n\n- [x] 1.1 Parse the words",
+      };
+
+      it("opens a pull request from a branch to the default branch, and finds it by its head", async () => {
+        const h = setup();
+        h.setBranch(opened.head, h.otherSha);
+        const request = { ...opened, base: h.defaultBranch };
+
+        expect(await h.forge.findPullRequest(opened.head)).toBeUndefined();
+        const pr = await h.forge.openPullRequest(request);
+
+        expect(pr).toEqual({ ...request, number: expect.any(Number) as unknown, url: expect.stringMatching(/\S/) as unknown });
+        expect(await h.forge.findPullRequest(opened.head)).toEqual(pr);
+        expect(await h.forge.findPullRequest("add-something-else")).toBeUndefined();
+        expect(h.pullRequests()).toEqual([request]);
+      });
+
+      it("rejects a second pull request for the same head with a ForgeError, keeping the first", async () => {
+        const h = setup();
+        h.setBranch(opened.head, h.otherSha);
+        const request = { ...opened, base: h.defaultBranch };
+        const first = await h.forge.openPullRequest(request);
+
+        const error = await h.forge.openPullRequest({ ...request, title: "again" }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ForgeError);
+        expect(error).toMatchObject({ kind: "failed" });
+        expect(h.pullRequests()).toEqual([request]);
+        expect(await h.forge.findPullRequest(opened.head)).toEqual(first);
+      });
+
+      it("rejects a pull request from a branch that does not exist", async () => {
+        const h = setup();
+
+        const error = await h.forge.openPullRequest({ ...opened, base: h.defaultBranch }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(ForgeError);
+        expect(h.pullRequests()).toEqual([]);
       });
     });
   });
