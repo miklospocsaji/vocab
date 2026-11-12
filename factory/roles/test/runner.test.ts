@@ -67,6 +67,7 @@ function sampleRole(overrides: Partial<Role> = {}): Role {
   return {
     name: "sample-role",
     model: MODEL,
+    runsIn: "worker",
     tools: ["Read", "Grep", "Glob", "Edit", "Write", "Bash"],
     allow: ["Read", "Grep", "Glob", "Bash(openspec validate:*)"],
     writable: ["openspec/changes/{changeId}/proposal.md", "openspec/changes/{changeId}/specs/**/spec.md"],

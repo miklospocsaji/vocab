@@ -309,6 +309,9 @@ importers:
       '@vocab/factory-artifacts':
         specifier: workspace:*
         version: link:../artifacts
+      '@vocab/factory-gates':
+        specifier: workspace:*
+        version: link:../gates
       minimatch:
         specifier: 10.2.6
         version: 10.2.6

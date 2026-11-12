@@ -75,7 +75,7 @@ Result schemas (`factory/artifacts`):
 - `classification-result`: `{ kind: "flaky" | "bug" | "design-flaw" | "spec-ambiguity" | "infra", evidence: string }`
 - `build-outcome`: `{ role, outcome: "passed" | "failed", reason?, roleResult?, diffCheck: { passed, outside: string[] }, gates?: string, patch: string, messages: string, baseCommit }`. Here `gates`, `patch` and `messages` are store keys, and `reason` is a runner failure reason or `diff-check`, `red` or `green`.
 
-The planner's result is checked by `validatePlan(plan, changeDir, tasksMd, previous?)` in `factory/roles/src/plan.ts`, against the rules in the spec. A failed check is a failed attempt, with the check's messages as evidence.
+The planner's result is checked by `validatePlan(plan, changeDir, tasksMd, previous, paths)` in `factory/roles/src/plan.ts`, against the rules in the spec. `previous` is `tasks.md` before the session on a re-plan, or `undefined`. `paths` holds the implementer's and test author's writable globs, which the caller takes from their configs. The plan lists every task, ticked ones included, so a task's line in `tasks.md` may be ticked (`- [x] <id>`) on a re-plan. It returns every problem found, each naming its task, scenario or file. A failed check is a failed attempt, with the check's messages as evidence.
 
 Prompts (`factory/roles/<role>.md`) follow the proposal author's structure: who you are, untrusted data, what you may write, what you return. Each role-specific prompt also says:
 - **Architect:** design what the delta specs require and no more. List the contracts changed and the decisions that need an ADR. Never edit specs or tasks.

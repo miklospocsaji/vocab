@@ -1,6 +1,6 @@
 # 0008 No worker egress control
 
-Status: accepted (2026-11-06; owner decision of 2026-11-02)
+Status: accepted (2026-11-06; owner decision of 2026-11-02); amended 2026-11-09 (the build container)
 
 ## Context
 
@@ -39,3 +39,17 @@ That layer also forced the webhook Lambda into the VPC, if it was to touch the l
 - The worker's network is a public subnet and a security group, with no routing infrastructure, so it costs nothing while idle.
 - Only the worker touches the ledger, so every state runs as a worker task (`add-cloud-proposal-run` design). That keeps the webhook Lambda out of the VPC.
 - **Reconsider before M3.** The test author and implementer need Bash and run code they wrote. An allowlist entry such as `pnpm test` does not contain that code. M3 decides how those roles run, and whether this ADR still holds.
+
+## Amendment 2026-11-09: the build container
+
+M3 runs the test author and implementer, which have Bash and run code they wrote, in a build container that holds only the model credential (ADR 0011). The decision above stands: still no network layer, for the same reasons of cost and upkeep, and because a domain allowlist would have to admit the Anthropic API, which is where a leaked key is used anyway.
+
+What changes in the build container:
+- The read guard and the environment allowlist still apply to the session's own tools, but not to the code it runs. A test run by `pnpm exec vitest` can read `/proc/1/environ` and open any connection.
+- What that code can reach is what the container holds: the model credential, the clone of the change branch (public), and the build task role's access to `work-items/*` in the artifact bucket. No GitHub token, App key, ledger credential or webhook secret: the entry point refuses to start with any of them in its environment.
+
+New accepted risks (owner, 2026-11-08 and 2026-11-09):
+- **The model credential can leak.** In the cloud it is the API key, limited by the $20 monthly workspace limit and revocable. Locally it is the owner's subscription token, which has no spend limit of its own and lasts until revoked or expired.
+- **A build output can be forged or overwritten** with the build task role's credentials. The worker re-checks every patch's paths before it commits, and the PR's CI run is an independent check.
+
+The worker itself is unchanged: it never runs agent-written code, and its roles have no Bash.

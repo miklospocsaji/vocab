@@ -6,29 +6,29 @@ Build step M3.2. Depends on `add-build-gates`. Unit tests run in `pnpm check` wi
 
 ### Decisions
 
-- [ ] 2.1 Write ADR 0011 (Bash roles in a build container) and ADR 0012 (role prompts outside `.claude/agents`). Amend ADRs 0007, 0008 and 0010. Edit the brief: section 3 (the build container in the components table and the gates' location), section 4 (prompt location, `runsIn`, the Bash rules, the classifier as an Agent SDK session instead of a Messages API call), section 5 (repo layout, security) and section 8 (the owner decisions of 2026-11-08 and 2026-11-09). Show the owner the brief diff before going on.
+- [x] 2.1 Write ADR 0011 (Bash roles in a build container) and ADR 0012 (role prompts outside `.claude/agents`). Amend ADRs 0007, 0008 and 0010. Edit the brief: section 3 (the build container in the components table and the gates' location), section 4 (prompt location, `runsIn`, the Bash rules, the classifier as an Agent SDK session instead of a Messages API call), section 5 (repo layout, security) and section 8 (the owner decisions of 2026-11-08 and 2026-11-09). Show the owner the brief diff before going on.
 
 ### Prompt location and config
 
-- [ ] 2.2 Failing tests in `factory/roles/test/config.test.ts`. Scenarios:
+- [x] 2.2 Failing tests in `factory/roles/test/config.test.ts`. Scenarios:
   - Invalid config is refused (now with `runsIn` missing as a case)
   - Config without a place to run is refused
   - No role is registered as an agent
   - Worker roles have no Bash
 
   Also: the prompt is read from `factory/roles/<role>.md`; a `!` exclusion makes a path unwritable; `{taskStubs}` expands to the given files.
-- [ ] 2.3 Move `.claude/agents/proposal-author.md` to `factory/roles/proposal-author.md` without its frontmatter, and remove `.claude/agents/`. Extend `RoleConfigSchema`, `loadRole`, `writableFor` and the path guard's matcher. Add `runsIn: worker` to `proposal-author.yaml`. Update the worker Dockerfile, its `.dockerignore` allowlist and `image.docker.test.ts`.
+- [x] 2.3 Move `.claude/agents/proposal-author.md` to `factory/roles/proposal-author.md` without its frontmatter, and remove `.claude/agents/`. Extend `RoleConfigSchema`, `loadRole`, `writableFor` and the path guard's matcher. Add `runsIn: worker` to `proposal-author.yaml`. Update the worker Dockerfile, its `.dockerignore` allowlist and `image.docker.test.ts`.
 
 ### Result schemas and plan validation
 
-- [ ] 2.4 Failing tests for the result schemas in `factory/artifacts` and for `validatePlan`. Scenarios:
+- [x] 2.4 Failing tests for the result schemas in `factory/artifacts` and for `validatePlan`. Scenarios:
   - Changes requested come with findings
   - Plan that leaves a scenario out is refused
   - Re-plan keeps finished tasks
   - Plan with a forward dependency is refused
 
   Also: a task id with no `tasks.md` line, an unknown scenario title, and a file outside the implementer's and test author's paths are each refused with a message naming them.
-- [ ] 2.5 Write the schemas (`design-result`, `review-result`, `plan-result`, `test-result`, `implementation-result`, `classification-result`, `build-outcome`) and `factory/roles/src/plan.ts`.
+- [x] 2.5 Write the schemas (`design-result`, `review-result`, `plan-result`, `test-result`, `implementation-result`, `classification-result`, `build-outcome`) and `factory/roles/src/plan.ts`.
 
 ### Runner boundaries
 

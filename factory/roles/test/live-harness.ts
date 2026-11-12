@@ -71,12 +71,14 @@ const DEFAULT_RULES = [
 
 /**
  * Writes a throwaway role into the worktree (`factory/roles/<name>.yaml` and
- * `.claude/agents/<name>.md`) and loads it with `loadRole`, as the factory would.
+ * `factory/roles/<name>.md`) and loads it with `loadRole`, as the factory would. A probe with
+ * Bash runs in the build container (ADR 0011); any other in the worker.
  */
 export async function writeProbeRole(worktree: string, probe: ProbeRole): Promise<Role> {
   const config: RoleConfig = {
     name: probe.name,
     model: LIVE_MODEL,
+    runsIn: probe.tools.includes("Bash") ? "build" : "worker",
     tools: probe.tools,
     allow: probe.allow,
     writable: probe.writable,
@@ -89,13 +91,8 @@ export async function writeProbeRole(worktree: string, probe: ProbeRole): Promis
   writeFile(worktree, `factory/roles/${probe.name}.yaml`, stringify(config));
   writeFile(
     worktree,
-    `.claude/agents/${probe.name}.md`,
+    `factory/roles/${probe.name}.md`,
     [
-      "---",
-      `name: ${probe.name}`,
-      "description: Throwaway role for a live boundary test.",
-      "---",
-      "",
       probe.intro ?? DEFAULT_INTRO,
       "",
       "Your task:",
