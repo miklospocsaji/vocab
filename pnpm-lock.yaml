@@ -222,6 +222,9 @@ importers:
       '@vocab/factory-roles':
         specifier: workspace:*
         version: link:../roles
+      '@vocab/factory-worker':
+        specifier: workspace:*
+        version: link:../worker
       pg:
         specifier: 8.23.1
         version: 8.23.1

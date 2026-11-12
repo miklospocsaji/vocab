@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./config": "./src/config.ts"
+    "./config": "./src/config.ts",
+    "./store": "./src/store.ts"
   },
   "scripts": {
     "typecheck": "tsc -p ."

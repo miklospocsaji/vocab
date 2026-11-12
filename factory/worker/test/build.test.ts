@@ -1,4 +1,5 @@
-// `factory-build <role> --input <key>` (add-build-roles task 2.10), with a fake role runner,
+// `factory-build <role> --input <key> [--patch <key>]` (add-build-roles task 2.10; gates-only in
+// add-build-loop task 3.11), with a fake role runner,
 // fake gates and install, a temp git remote and an FsStore.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -343,6 +344,58 @@ describe("factory-build", () => {
     await build("implementer");
     const jsonl = await store.get((await outcome("implementer")).messages);
     expect(jsonl.trimEnd().split("\n").map((line) => (JSON.parse(line) as { type: string }).type)).toEqual(["system", "result"]);
+  });
+
+  it("Scenario: Flaky failure re-runs the gates only", async () => {
+    // A session's patch, then a gates-only run of it under the next attempt's prefix, in a fresh home.
+    await build("implementer", {
+      act: (worktree) => {
+        write(worktree, SOURCE, "export const words = 2;\n");
+      },
+    });
+    const patchKey = (await outcome("implementer")).patch;
+    const rerun = `work-items/${CHANGE_ID}/tasks/1.1/implementer/2`;
+    await store.put(`${rerun}/input.json`, JSON.stringify(input()));
+    const f = fake();
+    const rerunHome = join(dirname(work), "rerun-home");
+    mkdirSync(rerunHome);
+
+    const code = await runBuild(["implementer", "--input", `${rerun}/input.json`, "--patch", patchKey], { ...f.deps, home: rerunHome });
+
+    expect(f.err.join("")).toBe("");
+    expect(code).toBe(BUILD_EXIT.ok);
+    // No session: no runner was even created.
+    expect(f.runners).toEqual([]);
+    expect(f.sessions).toEqual([]);
+    expect(f.installs).toEqual([join(rerunHome, "work")]);
+    expect(f.gates).toHaveLength(1);
+    expect(f.gates[0]).toMatchObject({ worktree: join(rerunHome, "work"), mode: "green", task: { id: "1.1", coveredSoFar: ["Words are counted"] } });
+    expect(readFileSync(join(rerunHome, "work", SOURCE), "utf8")).toBe("export const words = 2;\n");
+
+    expect(BuildOutcome.parse(JSON.parse(await store.get(`${rerun}/outcome.json`)))).toEqual({
+      role: "implementer",
+      outcome: "passed",
+      diffCheck: { passed: true, outside: [] },
+      gates: `${rerun}/gates.json`,
+      patch: `${rerun}/patch.diff`,
+      messages: `${rerun}/messages.jsonl`,
+      baseCommit: base,
+    });
+    expect(await store.get(`${rerun}/patch.diff`)).toBe(await store.get(patchKey));
+    expect(await store.get(`${rerun}/messages.jsonl`)).toBe("");
+  });
+
+  it("refuses --patch for the test author with exit 2, before cloning", async () => {
+    await store.put(INPUT_KEY("test-author"), JSON.stringify(input()));
+    await store.put(`${PREFIX("implementer")}/patch.diff`, "");
+    const f = fake();
+
+    const code = await runBuild(["test-author", "--input", INPUT_KEY("test-author"), "--patch", `${PREFIX("implementer")}/patch.diff`], f.deps);
+
+    expect(code).toBe(BUILD_EXIT.invalid);
+    expect(f.err.join("")).toContain("--patch");
+    expect(existsSync(join(home, "work"))).toBe(false);
+    expect(await store.exists(`${PREFIX("test-author")}/outcome.json`)).toBe(false);
   });
 
   it("asks for the worker's runner when FACTORY_CONTAINER is not build", async () => {

@@ -7,7 +7,11 @@
  *   Plan; `changes-requested` sends the findings to the architect's next attempt.
  * - `large`: the work item waits for the owner's design approval.
  * Design escalates after MAX_DESIGN_ATTEMPTS architect attempts in total, or at once on an
- * `auth-mode-mismatch`. A `small` change never comes here.
+ * `auth-mode-mismatch`. A `small` change comes here only when the build loop found a design flaw,
+ * and then takes the `medium` route.
+ *
+ * Back from the build loop for a design flaw, the architect's first attempt has the flaw's
+ * evidence in its prompt, and attempts are counted from the flaw.
  *
  * Its state is re-derived from the ledger, so a retried task goes on where the last one ended:
  * `design` runs the architect, `design-review` the reviewer on the pushed design.
@@ -18,6 +22,7 @@ import { closeAttempt, listAttempts, openAttempt, setWorkItemState, type Attempt
 import { AttemptFailed, type RetryEvidence, type Role, type RunRole, type WorkItem } from "@vocab/factory-roles";
 import { NotApplicable } from "./approval.ts";
 import { changeFiles, changeFolder, currentSpecs, readComplexity, readIfExists } from "./change-files.ts";
+import { pendingDesignFlaw } from "./design-flaw.ts";
 import { escalateWith } from "./escalation.ts";
 import { renderEvidence, renderFindings } from "./evidence.ts";
 import { commitPaths, ensureWorktree, type GitIdentity } from "./git.ts";
@@ -65,17 +70,20 @@ export async function design(ctx: DesignContext, item: WorkItemRow): Promise<Tra
   if (!reading.ok) {
     return escalateWith(ctx, item, `The factory escalated \`${item.changeId}\` to the owner: ${reading.problem}.`, `unknown x-complexity: ${reading.problem}`);
   }
-  if (reading.complexity === "small") throw new NotApplicable(`work item ${item.changeId} is a small change, which skips Design`);
+  const flaw = await pendingDesignFlaw(db, item.id);
+  if (reading.complexity === "small" && flaw === undefined) throw new NotApplicable(`work item ${item.changeId} is a small change, which skips Design`);
+  const complexity = reading.complexity === "small" ? "medium" : reading.complexity;
   const issue = await ctx.forge.getIssue(item.issueNumber);
 
   // A crash can leave an attempt open; it counts as failed, and toward the limit.
-  const previous = (await listAttempts(db, item.id)).filter((attempt) => attempt.state === DESIGN || attempt.state === REVIEW);
+  const since = flaw === undefined ? 0n : BigInt(flaw.attempt.id);
+  const previous = (await listAttempts(db, item.id)).filter((attempt) => (attempt.state === DESIGN || attempt.state === REVIEW) && BigInt(attempt.id) > since);
   for (const attempt of previous.filter(isOpen)) await closeAttempt(db, attempt.id, { outcome: "failed", failureReason: "error" });
 
   let workItem = item.state === "proposal-approved" ? await setWorkItemState(db, item.id, DESIGN) : item;
   let architectAttempts = previous.filter((attempt) => attempt.state === DESIGN).length;
   let reviewFailures = 0;
-  let evidence: RetryEvidence | undefined;
+  let evidence: RetryEvidence | undefined = flaw !== undefined && architectAttempts === 0 ? flaw.evidence : undefined;
   let needsDesign = workItem.state === DESIGN;
 
   const roleInput = async (): Promise<WorkItem> => ({
@@ -105,7 +113,7 @@ export async function design(ctx: DesignContext, item: WorkItemRow): Promise<Tra
         message: `docs(${item.changeId}): design the change\n\nWritten by the ${ctx.architect.name} role for issue #${String(item.issueNumber)}.`,
       });
       await ctx.forge.pushBranch({ worktree, branch: item.branch });
-      if (reading.complexity === "large") {
+      if (complexity === "large") {
         return { kind: "advance", workItem: await setWorkItemState(db, item.id, AWAITING_DESIGN), result: outcome.result, route: "owner-review" };
       }
       workItem = await setWorkItemState(db, item.id, REVIEW);

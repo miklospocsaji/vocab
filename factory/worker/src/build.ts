@@ -1,7 +1,7 @@
 /**
- * `factory-build <role> --input <key>`: one build role's attempt in the build container
- * (ADR 0011; add-build-roles design.md, "The build container"). Every dependency is passed in;
- * `build-main.ts` wires in the real ones.
+ * `factory-build <role> --input <key> [--patch <key>]`: one build role's attempt in the build
+ * container (ADR 0011; add-build-roles design.md, "The build container"). Every dependency is
+ * passed in; `build-main.ts` wires in the real ones.
  *
  * 1. Refuse to start (exit 2) if the environment holds any factory credential other than the
  *    model credential. The error names the variable, never its value.
@@ -14,11 +14,15 @@
  * 7. Write `patch.diff`, `gates.json` (if the gates ran), `messages.jsonl` and, last,
  *    `outcome.json`, next to the input key.
  *
+ * With `--patch` (the implementer only; add-build-loop design, "Gates-only re-run"), steps 3 to 7
+ * run with no session: the given patch is applied at `baseCommit` in place of step 4, and
+ * `messages.jsonl` is empty.
+ *
  * Exit 0 when the outcome is written, whether it passed or failed; 1 on a crash, with no outcome;
  * 2 on bad input.
  */
 import { execFile } from "node:child_process";
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, posix, relative, sep } from "node:path";
 import { parseArgs, promisify } from "node:util";
 import { BuildOutcome, PlanResult, type GatesResult } from "@vocab/factory-artifacts";
@@ -44,7 +48,7 @@ const MAX_BUFFER = 64 * 1024 * 1024;
 
 export const BUILD_EXIT = { ok: 0, error: 1, invalid: 2 } as const;
 
-export const BUILD_USAGE = "Usage: factory-build <role> --input <key>\n";
+export const BUILD_USAGE = "Usage: factory-build <role> --input <key> [--patch <key>]\n";
 
 /** Factory credentials other than the model credential: the build container refuses to start with any of them (ADR 0011). */
 export const FACTORY_CREDENTIALS = [
@@ -119,10 +123,11 @@ export async function runBuild(argv: string[], deps: BuildDeps): Promise<number>
   const secrets = MODEL_CREDENTIALS.flatMap((name) => deps.env[name] ?? []);
 
   try {
-    const { roleName, inputKey } = parseBuildArgs(argv);
+    const { roleName, inputKey, patchKey } = parseBuildArgs(argv);
     const input = await readInput(deps.store, inputKey);
     const role = await requireBuildRole(deps, roleName);
-    return await build(deps, role, input, inputKey, secrets);
+    const patch = patchKey === undefined ? undefined : await readPatch(deps.store, role, patchKey);
+    return await build(deps, role, input, inputKey, secrets, patch);
   } catch (error) {
     const message = redact(error instanceof Error ? error.message : String(error), secrets);
     if (error instanceof InvalidInput) {
@@ -134,13 +139,15 @@ export async function runBuild(argv: string[], deps: BuildDeps): Promise<number>
   }
 }
 
-function parseBuildArgs(argv: string[]): { roleName: string; inputKey: string } {
+function parseBuildArgs(argv: string[]): { roleName: string; inputKey: string; patchKey: string | undefined } {
   let positionals: string[];
   let inputKey: string | undefined;
+  let patchKey: string | undefined;
   try {
-    const parsed = parseArgs({ args: argv, allowPositionals: true, strict: true, options: { input: { type: "string" } } });
+    const parsed = parseArgs({ args: argv, allowPositionals: true, strict: true, options: { input: { type: "string" }, patch: { type: "string" } } });
     positionals = parsed.positionals;
     inputKey = parsed.values.input;
+    patchKey = parsed.values.patch;
   } catch (error) {
     throw new InvalidInput(`usage: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -151,11 +158,22 @@ function parseBuildArgs(argv: string[]): { roleName: string; inputKey: string } 
   if (inputKey === undefined) throw new InvalidInput("usage: --input is required");
   try {
     checkKey(inputKey);
+    if (patchKey !== undefined) checkKey(patchKey);
   } catch (error) {
     if (error instanceof InvalidStoreKey) throw new InvalidInput(error.message);
     throw error;
   }
-  return { roleName, inputKey };
+  return { roleName, inputKey, patchKey };
+}
+
+/** The patch of a gates-only run; only the implementer's green gates are re-run. */
+async function readPatch(store: ArtifactStore, role: Role, key: string): Promise<string> {
+  if (GATE_MODE[role.name] !== "green") throw new InvalidInput(`--patch re-runs the green gates, which do not follow role ${role.name}`);
+  try {
+    return await store.get(key);
+  } catch (error) {
+    throw new InvalidInput(`cannot read the patch ${key}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 async function readInput(store: ArtifactStore, key: string): Promise<BuildInput> {
@@ -188,7 +206,7 @@ async function requireBuildRole(deps: BuildDeps, name: string): Promise<Role> {
   return role;
 }
 
-async function build(deps: BuildDeps, role: Role, input: BuildInput, inputKey: string, secrets: string[]): Promise<number> {
+async function build(deps: BuildDeps, role: Role, input: BuildInput, inputKey: string, secrets: string[], patch: string | undefined): Promise<number> {
   const { store, env } = deps;
   const { changeId, baseCommit, task } = input;
   const mode = GATE_MODE[role.name] ?? "green";
@@ -201,31 +219,35 @@ async function build(deps: BuildDeps, role: Role, input: BuildInput, inputKey: s
 
   const stubs = role.writable.includes(TASK_STUBS) ? await newFiles(worktree, baseCommit, task.files) : [];
   const recorder = new JsonlRecorder();
-  const runRole = deps.createRunRole({ recorder, container: env["FACTORY_CONTAINER"] === "build" ? "build" : "worker" });
-  const prompt = renderTaskPrompt({
-    changeId,
-    task,
-    changeFiles: await changeFiles(worktree, changeId),
-    ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
-  });
 
   let roleResult: unknown;
   let reason: BuildOutcome["reason"];
-  try {
-    roleResult = await runRole(role, {
-      id: `${changeId}/${task.id}`,
+  if (patch !== undefined) {
+    await applyPatch(worktree, patch, env);
+  } else {
+    const runRole = deps.createRunRole({ recorder, container: env["FACTORY_CONTAINER"] === "build" ? "build" : "worker" });
+    const prompt = renderTaskPrompt({
       changeId,
-      worktree,
-      issue: { title: "", body: "" },
-      changeFiles: [],
-      specs: [],
-      taskStubs: stubs,
-      prompt,
+      task,
+      changeFiles: await changeFiles(worktree, changeId),
+      ...(input.evidence === undefined ? {} : { evidence: input.evidence }),
     });
-  } catch (error) {
-    if (error instanceof RoleConfigError) throw new InvalidInput(error.message);
-    if (!(error instanceof AttemptFailed)) throw error;
-    reason = error.reason;
+    try {
+      roleResult = await runRole(role, {
+        id: `${changeId}/${task.id}`,
+        changeId,
+        worktree,
+        issue: { title: "", body: "" },
+        changeFiles: [],
+        specs: [],
+        taskStubs: stubs,
+        prompt,
+      });
+    } catch (error) {
+      if (error instanceof RoleConfigError) throw new InvalidInput(error.message);
+      if (!(error instanceof AttemptFailed)) throw error;
+      reason = error.reason;
+    }
   }
 
   const check = await diffCheck(worktree, baseCommit, writableFor(role, changeId, stubs), stubs);
@@ -261,7 +283,7 @@ async function build(deps: BuildDeps, role: Role, input: BuildInput, inputKey: s
     baseCommit,
   });
   await store.put(key("outcome.json"), `${JSON.stringify(outcome, null, 2)}\n`);
-  deps.out(`factory-build: ${role.name} for task ${task.id} of ${changeId}: ${outcome.outcome}${reason === undefined ? "" : ` (${reason})`}\n`);
+  deps.out(`factory-build: ${role.name}${patch === undefined ? "" : " (gates only)"} for task ${task.id} of ${changeId}: ${outcome.outcome}${reason === undefined ? "" : ` (${reason})`}\n`);
   return BUILD_EXIT.ok;
 }
 
@@ -281,6 +303,14 @@ async function clone(input: BuildInput, worktree: string, env: Record<string, st
   const options = { env: toolEnv(env), maxBuffer: MAX_BUFFER };
   await run("git", ["clone", "--quiet", "--no-checkout", "--branch", input.branch, "--", input.cloneUrl, worktree], options);
   await run("git", ["checkout", "--quiet", "--detach", input.baseCommit], { ...options, cwd: worktree });
+}
+
+/** Applies a gates-only run's patch to the clone, as `diffPatch` made it: binary, untracked files included. */
+async function applyPatch(worktree: string, patch: string, env: Record<string, string | undefined>): Promise<void> {
+  if (patch === "") return;
+  const file = join(worktree, "..", "rerun.patch");
+  await writeFile(file, patch);
+  await run("git", ["apply", "--binary", file], { cwd: worktree, env: toolEnv(env), maxBuffer: MAX_BUFFER });
 }
 
 /**

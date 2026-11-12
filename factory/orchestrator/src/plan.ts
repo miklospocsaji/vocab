@@ -7,7 +7,8 @@
  * `build`. The transition carries the unfinished task ids, in order, for the build loop.
  *
  * Plan runs for a `small` change straight after Approved, for a `medium` one once the reviewer
- * approved its design, and for a `large` one once the owner closed its design approval.
+ * approved its design, and for a `large` one once the owner closed its design approval. After a
+ * design flaw it re-plans: attempts are counted from the flaw, and the ticked tasks stay done.
  */
 import { join } from "node:path";
 import { PlanResult } from "@vocab/factory-artifacts";
@@ -15,6 +16,7 @@ import { closeAttempt, findOpenApproval, listAttempts, listTasks, openAttempt, s
 import { AttemptFailed, validatePlan, type PlanPaths, type RetryEvidence, type Role, type RunRole, type WorkItem } from "@vocab/factory-roles";
 import { NotApplicable } from "./approval.ts";
 import { changeFiles, changeFolder, currentSpecs, readComplexity, readIfExists } from "./change-files.ts";
+import { lastDesignFlawId } from "./design-flaw.ts";
 import { escalateWith } from "./escalation.ts";
 import { renderEvidence } from "./evidence.ts";
 import { commitPaths, ensureWorktree, type GitIdentity } from "./git.ts";
@@ -51,7 +53,8 @@ export async function plan(ctx: PlanContext, item: WorkItemRow): Promise<Transit
   const issue = await ctx.forge.getIssue(item.issueNumber);
 
   // A crash can leave an attempt open; it counts as failed, and toward the limit.
-  const previousAttempts = (await listAttempts(db, item.id)).filter((attempt) => attempt.state === PLAN);
+  const since = await lastDesignFlawId(db, item.id);
+  const previousAttempts = (await listAttempts(db, item.id)).filter((attempt) => attempt.state === PLAN && BigInt(attempt.id) > since);
   for (const attempt of previousAttempts.filter(isOpen)) await closeAttempt(db, attempt.id, { outcome: "failed", failureReason: "error" });
   const workItem = item.state === PLAN ? item : await setWorkItemState(db, item.id, PLAN);
 

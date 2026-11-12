@@ -28,7 +28,7 @@ Scenarios carried unchanged inside MODIFIED requirements keep their existing tes
 
 ### Step, Record and the PR
 
-- [ ] 3.7 Failing tests for `step` with a fake build runner writing outcomes to an `FsStore`. Scenarios:
+- [x] 3.7 Failing tests for `step` with a fake build runner writing outcomes to an `FsStore`. Scenarios:
   - Tests are committed before code
   - Red gate failure retries the test author
   - Forged patch is refused
@@ -42,20 +42,20 @@ Scenarios carried unchanged inside MODIFIED requirements keep their existing tes
   - Build cost reaches the ledger
 
   Also: a missing outcome records `no-outcome` and counts as `infra`; a repeated `step` after a recorded outcome records nothing twice.
-- [ ] 3.8 Write `step`, the outcome recording and `tick`.
-- [ ] 3.9 Failing tests. Scenarios:
+- [x] 3.8 Write `step`, the outcome recording and `tick`.
+- [x] 3.9 Failing tests. Scenarios:
   - Pull request is opened once
   - Design flaw re-plans the unfinished tasks (handlers in sequence with fake roles)
-- [ ] 3.10 Write `open-pr` and the design-flaw path.
+- [x] 3.10 Write `open-pr` and the design-flaw path.
 
 ### Local run
 
-- [ ] 3.11 Failing CLI and run-loop tests with fakes. Scenarios:
+- [x] 3.11 Failing CLI and run-loop tests with fakes. Scenarios:
   - Local run reaches the pull request
   - Summary comment is posted (unchanged, re-run)
 
   Also: `--until design` and `--until plan` stop where they say; a run stops at an open approval and names the `approve` command.
-- [ ] 3.12 Write the run loop, `pnpm factory approve`, `--until design|plan|pr` and the Docker build runner.
+- [x] 3.12 Write the run loop, `pnpm factory approve`, `--until design|plan|pr` and the Docker build runner.
 - [ ] 3.13 With the owner's approval of each GitHub write, run the factory locally end to end on a small real issue in `app/domain` that the owner writes, up to the PR. Record here: attempts per role, tokens and estimated cost per role and in total, wall time, and anything the roles got wrong. If the typical spend is near the $5 limit, stop and bring the owner options for caps or models before M3.4.
 
 ## Step M3.4: The build loop in AWS, and the exit run

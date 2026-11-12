@@ -10,10 +10,12 @@ import { join } from "node:path";
 import { FakeForge } from "@vocab/factory-forge/testing";
 import { LedgerRecorder, migrate, type WorkItemRow } from "@vocab/factory-ledger";
 import { createTestDatabase, type TestDatabase } from "@vocab/factory-ledger/testing";
-import { loadRole } from "@vocab/factory-roles";
+import { loadRole, type PlanPaths } from "@vocab/factory-roles";
 import { afterEach, beforeAll, beforeEach, vi } from "vitest";
-import type { GitIdentity } from "../src/git.ts";
+import { approved } from "../src/approval.ts";
+import { changeFileReader, type GitIdentity } from "../src/git.ts";
 import { intake } from "../src/intake.ts";
+import { plan } from "../src/plan.ts";
 import { proposal } from "../src/proposal.ts";
 import { CHANGE_FILES, createFakeRoleRunner, validResult, type FakeStep } from "./fake-role-runner.ts";
 
@@ -137,3 +139,52 @@ export const changedFiles = (f: Fixture, commit: string): string[] =>
 
 /** `author name|author email|committer name|committer email` of a commit on the remote. */
 export const identityOf = (f: Fixture, commit: string): string => git(f.remote, "log", "-1", "--format=%an|%ae|%cn|%ce", commit);
+
+/** A two-task plan for the fixture's change, and its tasks.md. */
+export const TASKS_MD = ["# Tasks", "", "## 1. Import", "", "- [ ] 1.1 Parse the lookups", "- [ ] 1.2 Parse the books", ""].join("\n");
+export const PLAN = {
+  tasks: [
+    {
+      id: "1.1",
+      title: "Parse the lookups",
+      dependsOn: [],
+      files: ["app/domain/src/lookups.ts"],
+      scenarios: ["Lookups are imported"],
+      tests: ["app/domain/test/lookups.test.ts"],
+    },
+    {
+      id: "1.2",
+      title: "Parse the books",
+      dependsOn: ["1.1"],
+      files: ["app/domain/src/books.ts"],
+      scenarios: ["Books are imported"],
+      tests: ["app/domain/test/books.test.ts"],
+    },
+  ],
+};
+
+/** The planner's step for a plan and its tasks.md. */
+export const planStep = (tasksMd = TASKS_MD, result: unknown = PLAN): FakeStep => ({ files: { "tasks.md": tasksMd }, result });
+
+/** A `small` change through Approved and Plan: the work item is in `build`, with PLAN's tasks in the ledger. */
+export async function plannedWorkItem(f: Fixture): Promise<WorkItemRow> {
+  const ctx = { db: f.db.pool, forge: f.forge };
+  const routed = await approved({ ...ctx, readChangeFile: changeFileReader({ repo: f.repo, home: f.home }) }, await proposedWorkItem(f, "small"));
+  if (routed.kind !== "advance") throw new Error(`approved did not advance: ${JSON.stringify(routed)}`);
+  const fake = createFakeRoleRunner(new LedgerRecorder(f.db.pool), [planStep()]);
+  const planned = await plan(
+    { ...ctx, runRole: fake.runRole, planner: await loadRole("planner"), planPaths: await planPaths(), repo: f.repo, home: f.home, committer: BOT },
+    routed.workItem,
+  );
+  if (planned.kind !== "advance") throw new Error(`plan did not advance: ${JSON.stringify(planned)}`);
+  return planned.workItem;
+}
+
+/** The plan paths from the build roles' configs. */
+export async function planPaths(): Promise<PlanPaths> {
+  return { implementer: (await loadRole("implementer")).writable, testAuthor: (await loadRole("test-author")).writable };
+}
+
+/** The subjects of the commits on the remote branch after `since`, oldest first. */
+export const subjectsSince = (f: Fixture, since: string, branch = CHANGE_ID): string[] =>
+  git(f.remote, "log", "--reverse", "--format=%s", `${since}..refs/heads/${branch}`).split("\n").filter((line) => line !== "");
