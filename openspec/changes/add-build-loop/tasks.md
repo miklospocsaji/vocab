@@ -56,7 +56,30 @@ Scenarios carried unchanged inside MODIFIED requirements keep their existing tes
 
   Also: `--until design` and `--until plan` stop where they say; a run stops at an open approval and names the `approve` command.
 - [x] 3.12 Write the run loop, `pnpm factory approve`, `--until design|plan|pr` and the Docker build runner.
-- [ ] 3.13 With the owner's approval of each GitHub write, run the factory locally end to end on a small real issue in `app/domain` that the owner writes, up to the PR. Record here: attempts per role, tokens and estimated cost per role and in total, wall time, and anything the roles got wrong. If the typical spend is near the $5 limit, stop and bring the owner options for caps or models before M3.4.
+- [x] 3.13 With the owner's approval of each GitHub write, run the factory locally end to end on a small real issue in `app/domain` that the owner writes, up to the PR. Record here: attempts per role, tokens and estimated cost per role and in total, wall time, and anything the roles got wrong. If the typical spend is near the $5 limit, stop and bring the owner options for caps or models before M3.4.
+
+  **Record (12 November 2026):** issue #7, "Clean up Kindle usage sentences and find the looked-up word in them", a `small` change in `app/domain`, run locally with the subscription token, up to PR #9.
+
+  | Role | Task | Attempts | Tokens (in / out / cache read / cache write) | Estimated cost | Duration |
+  |---|---|---:|---|---:|---:|
+  | proposal-author | | 1 | 99,538 (8 / 3,581 / 69,318 / 26,631) | $0.30 | 33 s |
+  | planner | | 1 | 46,888 (4 / 832 / 22,861 / 23,191) | $0.11 | 8 s |
+  | test-author | 1.1 | 1 | 83,340 (12 / 2,236 / 64,789 / 16,303) | $0.09 | 112 s |
+  | implementer | 1.1 | 1 | 79,518 (12 / 1,779 / 63,074 / 14,653) | $0.08 | 251 s |
+  | test-author | 1.2 | 1 | 81,885 (12 / 2,244 / 70,942 / 8,687) | $0.06 | 76 s |
+  | implementer | 1.2 | 1 | 78,752 (12 / 1,573 / 68,895 / 8,272) | $0.06 | 98 s |
+  | **Total** | | **6** | **469,921** | **$0.70** | |
+
+  - Per role: proposal author $0.30, planner $0.11, test author $0.16, implementer $0.14. No retries, no classifier call, no design (a `small` change).
+  - Wall time: `--until proposal` 40 s; `--until pr` 9 min 12 s (Plan, four builds in the local `build` image, the commits and the PR). Each build's duration includes the container's clone and install.
+  - The typical spend, $0.70 for a two-task change, is far from the $5 limit: no caps or model changes are needed before M3.4.
+  - What went wrong, or nearly:
+    - The change branch was cut from `master` before M3 was merged, so it had no `app/domain` package; the proposal author asked about it as an open question. The owner merged M3 (PR #8) and merged `master` into the change branch before approving. Intake cuts from `master`, so factory work needs the factory's own milestone merged first.
+    - The proposal author and test author wrote the invisible characters (soft hyphen, zero-width characters, byte order mark, U+00A0) literally in the spec and tests, where the issue used `\u` escapes. The tests pass, but the scenarios cannot be read or reviewed by eye, and an editor may strip them.
+    - The proposal's Impact says `app/domain` "may not exist yet", which was true when it ran and stale by the PR.
+    - The proposal author's 4 open questions went unanswered, as nothing reads answers; none blocked the build.
+    - Two factory bugs found before the run, both fixed: the Docker build runner left the store unwritable for the image's user, and `.gitignore` hid the coverage gate's test fixture from CI.
+    - The pushed branch's `origin/<branch>` ref in the local worktree stays stale after `pushBranch` (it pushes to the URL, not to `origin`), so `git status` there shows "ahead 1". Cosmetic; `step` fetches before each build.
 
 ## Step M3.4: The build loop in AWS, and the exit run
 
