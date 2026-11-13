@@ -166,6 +166,8 @@ The first build of issue #11 (task 1.1, test author) failed three times with `gi
   - the three failed cloud attempts of #11 before the stop
 - **A mistake during the diagnosis:** the core watcher matched files by name. It also deleted package files named `core.*` inside that one throwaway container, which spoiled that run's typecheck. The core evidence came from ELF notes and the session's own log, and is not affected.
 
+- **Deploy of the fixes** (4.10c, 2026-11-13): no execution was running, and the deploy took 131 s. The build task is now at revision 2: 8192 MiB, core ulimit 0 soft and hard, and `NODE_OPTIONS=--max-old-space-size=4096`. The boundary check is at revision 2 and the worker at revision 8. `pnpm test:cloud`: 3 files, 5 tests passed, including "Build boundaries hold in Fargate" on the new definitions.
+
 ## Decisions
 
 - **One `step` state per move, rebuilt from the ledger.** A retried or duplicated task re-derives what to do. The alternative, one state per role and outcome, would double the states and the start-ups.
