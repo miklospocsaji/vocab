@@ -103,7 +103,7 @@ Scenarios carried unchanged inside MODIFIED requirements keep their existing tes
 
 ### Exit run
 
-- [ ] 4.9 Draft the importer issue (parse words, lookups and books from `vocab.db` in `app/domain`; idempotent re-import; tested against `app/fixtures/vocab.db` and `vocab-older.db`) and show it to the owner. The owner creates it and labels it `factory`. Do not deploy while its execution runs.
+- [x] 4.9 Draft the importer issue (parse words, lookups and books from `vocab.db` in `app/domain`; idempotent re-import; tested against `app/fixtures/vocab.db` and `vocab-older.db`) and show it to the owner. The owner creates it and labels it `factory`. Do not deploy while its execution runs.
 - [ ] 4.10 Follow the execution to its PR. Confirm and record in the M3 PR description:
   - every task in `tasks.md` ticked, each in a commit by `vocab-factory[bot]` with green gates
   - no commit by anyone else touching `app/**/src` or `app/**/test` (`git log --format='%an' -- app/` on the branch)
