@@ -9,7 +9,10 @@
  * - Each connection attempt is bounded, so `runWorker`'s wait for a resuming Aurora can retry.
  * - The Forge is the factory's GitHub App (ADR 0009), and commits are its bot user's.
  * - The clone and the worktrees live in a temp home, removed at the end.
- * - Step Functions is reached with the task role's credentials, in the task's region.
+ * - Step Functions and the artifact bucket (`FACTORY_STORE_BUCKET`) are reached with the task
+ *   role's credentials, in the task's region. The build task clones the repository over public
+ *   HTTPS with no token.
+ * - Roles and prompts come from the image.
  * Nothing printed contains a secret: errors from the Forge are scrubbed of tokens, and
  * configuration errors name a variable only. Exit codes are `WORKER_EXIT` in worker.ts.
  */
@@ -23,7 +26,8 @@ import { createRunner, loadRole } from "@vocab/factory-roles";
 import pg from "pg";
 import { ENV, parseWorkerArgs, USAGE, WorkerConfigError, workerConfig } from "./config.ts";
 import type { TaskTokens } from "@vocab/factory-orchestrator";
-import { runWorker, WORKER_EXIT } from "./worker.ts";
+import { STORE_ENV, storeFromEnv, type ArtifactStore } from "./store.ts";
+import { runWorker, WORKER_EXIT, type WorkerRoles } from "./worker.ts";
 
 const PROPOSAL_AUTHOR = "proposal-author";
 /** One connection attempt; runWorker's waitForLedger retries within its 180 s. */
@@ -49,6 +53,8 @@ async function main(argv: string[]): Promise<number> {
     err(`factory-worker: ${error.message}\n`);
     return WORKER_EXIT.invalid;
   }
+  // Only `step` uses the store; the other states run without one.
+  const store = storeFromEnv(process.env) ?? missingStore();
   const taskToken = process.env[ENV.taskToken];
   // Read once; no child process (git, openspec, the role session) needs them.
   Reflect.deleteProperty(process.env, ENV.privateKey);
@@ -74,6 +80,9 @@ async function main(argv: string[]): Promise<number> {
       forge,
       runRole: createRunner({ recorder: new LedgerRecorder(pool) }),
       role: await loadRole(PROPOSAL_AUTHOR),
+      roles: await loadRoles(),
+      store,
+      cloneUrl: `https://github.com/${config.owner}/${config.repo}.git`,
       home,
       committer,
       taskTokens: stepFunctions(),
@@ -85,6 +94,22 @@ async function main(argv: string[]): Promise<number> {
     await rm(home, { recursive: true, force: true });
     await pool.end();
   }
+}
+
+/** A store that fails every call, naming the variables that would configure one. */
+function missingStore(): ArtifactStore {
+  const fail = () => Promise.reject(new Error(`no artifact store: neither ${STORE_ENV.dir} nor ${STORE_ENV.bucket} is set`));
+  return { get: fail, put: fail, exists: fail };
+}
+
+async function loadRoles(): Promise<WorkerRoles> {
+  const [architect, designReviewer, planner, testAuthor, implementer, classifier] = await Promise.all(
+    ["architect", "design-reviewer", "planner", "test-author", "implementer", "failure-classifier"].map((name) => loadRole(name)),
+  );
+  if (architect === undefined || designReviewer === undefined || planner === undefined || testAuthor === undefined || implementer === undefined || classifier === undefined) {
+    throw new Error("a role config is missing");
+  }
+  return { architect, designReviewer, planner, testAuthor, implementer, classifier };
 }
 
 /** SendTaskSuccess and SendTaskFailure with the task role's credentials. */

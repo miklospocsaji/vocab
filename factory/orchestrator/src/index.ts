@@ -19,8 +19,8 @@ export { APPROVAL_INSTRUCTION, DESIGN_APPROVAL_INSTRUCTION, renderDesignSummary,
 export type { DesignSummaryInput, ProposalCost, ProposalSummaryInput } from "./summary.ts";
 export { ESCALATION_REASON, ESCALATION_REASONS, WORKER_EXIT } from "./exit-codes.ts";
 export type { EscalationReason } from "./exit-codes.ts";
-export { definition, RETRY_WAITS_SECONDS, TASK_TOKEN_VAR } from "./state-machine.ts";
-export type { Json, StateMachineDefinition, WorkerTaskConfig } from "./state-machine.ts";
+export { definition, INFRA_WAIT_SECONDS, PLAN_TIMEOUT_SECONDS, RETRY_WAITS_SECONDS, TASK_TOKEN_VAR } from "./state-machine.ts";
+export type { BuildTaskConfig, Json, StateMachineDefinition, WorkerTaskConfig } from "./state-machine.ts";
 export { approve, approved, awaitApproval, escalateWorkItem, NotApplicable, proposalCost, stateCost } from "./approval.ts";
 export { readComplexity } from "./change-files.ts";
 export type { ComplexityReading } from "./change-files.ts";

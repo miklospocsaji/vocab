@@ -3,8 +3,9 @@
  * and add-build-loop designs, "Worker states"):
  * - AwaitApproval stores the task token, then posts the summary, so the owner cannot reply to a
  *   summary before its token exists. It serves the proposal and, for a `large` change, the design.
- * - `/approve` closes the open approval and resumes the execution with its token. If resuming
- *   fails, the approval is reopened, so the owner can try again.
+ * - `/approve` closes the open approval, of either kind, and resumes the execution with its token.
+ *   If resuming fails, the approval is reopened, so the owner can try again. A resumed design
+ *   approval is confirmed on the issue here; a proposal's is confirmed by Approved, which follows.
  * - Approved records the outcome and routes the work item on its complexity; Escalate marks the
  *   work item and says why, by a fixed code.
  * Like the other handlers, these are plain async functions with no AWS-specific control flow:
@@ -93,12 +94,13 @@ async function designSummary(ctx: AwaitApprovalContext, workItem: WorkItemRow): 
 }
 
 /**
- * - `resumed`: the approval is closed by `by`, and the execution resumed.
+ * - `resumed`: the approval of `approval`'s kind is closed by `by`, and the execution resumed. If
+ *   the design approval's confirmation could not be posted, `commentError` says why.
  * - `nothing-awaits`: there was no open approval; the issue got a comment saying so.
  * - `resume-failed`: resuming failed; the approval is open again and the issue says so.
  */
 export type ApproveOutcome =
-  | { kind: "resumed"; workItem: WorkItemRow }
+  | { kind: "resumed"; workItem: WorkItemRow; approval: ApprovalKind; commentError?: unknown }
   | { kind: "nothing-awaits"; workItem: WorkItemRow | undefined }
   | { kind: "resume-failed"; workItem: WorkItemRow; error: unknown };
 
@@ -113,7 +115,8 @@ const APPROVAL_OUTPUT = "{}";
 export async function approve(ctx: ApproveContext, issueNumber: number, by: string): Promise<ApproveOutcome> {
   const workItem = await findWorkItemByIssue(ctx.db, issueNumber);
   // A work item no longer awaiting (escalated, say) may still hold an approval whose token is dead.
-  const approval = workItem?.state === AWAITING ? await closeApproval(ctx.db, workItem.id, by) : undefined;
+  const awaiting = workItem?.state === AWAITING || workItem?.state === AWAITING_DESIGN;
+  const approval = awaiting ? await closeApproval(ctx.db, workItem.id, by) : undefined;
   if (workItem === undefined || approval === undefined) {
     await ctx.forge.comment(issueNumber, nothingAwaitsComment(workItem));
     return { kind: "nothing-awaits", workItem };
@@ -123,13 +126,21 @@ export async function approve(ctx: ApproveContext, issueNumber: number, by: stri
     await ctx.taskTokens.succeed(approval.taskToken, APPROVAL_OUTPUT);
   } catch (error) {
     await reopenApproval(ctx.db, approval.id);
+    const subject = approval.kind === "design" ? `the design of \`${workItem.changeId}\`` : `the proposal \`${workItem.changeId}\``;
     await ctx.forge.comment(
       issueNumber,
-      `The factory could not resume \`${workItem.changeId}\` after your approval, so the proposal still awaits it. Reply \`/approve\` again to retry.`,
+      `Your approval of ${subject} did not go through: the factory could not resume the work item, so it still awaits your approval. Reply \`/approve\` again to retry.`,
     );
     return { kind: "resume-failed", workItem, error };
   }
-  return { kind: "resumed", workItem };
+  if (approval.kind !== "design") return { kind: "resumed", workItem, approval: approval.kind };
+  try {
+    await ctx.forge.comment(issueNumber, `The design of \`${workItem.changeId}\` is approved. The work item goes on to Plan.`);
+  } catch (commentError) {
+    // The execution has resumed: the approval went through, whatever the comment.
+    return { kind: "resumed", workItem, approval: approval.kind, commentError };
+  }
+  return { kind: "resumed", workItem, approval: approval.kind };
 }
 
 function nothingAwaitsComment(workItem: WorkItemRow | undefined): string {

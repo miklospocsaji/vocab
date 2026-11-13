@@ -1,6 +1,7 @@
 /**
  * Test helper: runs a JSONata state machine definition the way Step Functions does, for the
- * subset the factory uses (Pass, Task, Choice, Wait, Succeed, Fail), with the real JSONata
+ * subset the factory uses (Pass, Task, Choice, Wait, Succeed, Fail, and an inline Map run one
+ * item at a time, add-build-loop task 4.3), with the real JSONata
  * library and scripted ECS task outcomes. No AWS.
  *
  * How a worker task's outcome surfaces follows the spike of task 3.1 (design.md, "Exit-code
@@ -94,32 +95,82 @@ const ALLOWED_FIELDS: Record<string, string[]> = {
   Wait: [...COMMON_FIELDS, "Seconds"],
   Succeed: ["Type", "Comment", "Output"],
   Fail: ["Type", "Comment", "Error", "Cause"],
+  Map: [...COMMON_FIELDS, "Items", "ItemProcessor", "MaxConcurrency", "Catch"],
 };
 
 export async function simulate(definition: unknown, input: unknown, options: SimulateOptions): Promise<Simulation> {
   const def = definition as Definition;
   if (def.QueryLanguage !== "JSONata") throw new Error("the simulator runs JSONata definitions only");
   const result: Simulation = { status: "FAILED", path: [], tasks: [], waits: [], records: [] };
-  const maxSteps = options.maxSteps ?? 100;
+  const run: Run = { result, options, input, maxSteps: options.maxSteps ?? 200, steps: 0, tokens: 0 };
 
-  let variables: Record<string, unknown> = {};
+  const ending = await execute(run, def, input, {}, new Set());
+  if (ending.kind === "succeeded") result.status = "SUCCEEDED";
+  else result.error = ending.error;
+  return result;
+}
+
+/** One simulation's shared state: what it records, and its step and token counters. */
+interface Run {
+  result: Simulation;
+  options: SimulateOptions;
+  input: unknown;
+  maxSteps: number;
+  steps: number;
+  tokens: number;
+}
+
+type Ending = { kind: "succeeded"; output: unknown } | { kind: "failed"; error: string; cause: string };
+
+/**
+ * Runs states from `StartAt` until one ends: the top-level definition, or a Map's item processor.
+ * `outer` names the variables of enclosing scopes, which an inner state may read but, as in Step
+ * Functions, never assign.
+ */
+async function execute(
+  run: Run,
+  def: { StartAt: string; States: Record<string, State> },
+  input: unknown,
+  initial: Record<string, unknown>,
+  outer: Set<string>,
+): Promise<Ending> {
+  const { result, options } = run;
+  let variables: Record<string, unknown> = { ...initial };
   let current: string | undefined = def.StartAt;
   let value: unknown = input;
-  let tokens = 0;
 
-  for (let step = 0; current !== undefined; step += 1) {
-    if (step >= maxSteps) throw new Error(`no end after ${String(maxSteps)} states: ${result.path.join(" → ")}`);
+  while (current !== undefined) {
+    run.steps += 1;
+    if (run.steps > run.maxSteps) throw new Error(`no end after ${String(run.maxSteps)} states: ${result.path.join(" → ")}`);
     const name: string = current;
     const state = def.States[name];
     if (state === undefined) throw new Error(`no state ${name}`);
     checkFields(name, state);
     result.path.push(name);
 
-    const context = { Execution: { Id: options.executionArn, Input: input }, State: { Name: name } };
+    const context = { Execution: { Id: options.executionArn, Input: run.input }, State: { Name: name } };
     const base = { input: value, context };
     let next: string | undefined;
     let output: unknown;
-    let assigned: Record<string, unknown>;
+    let assigned: Record<string, unknown> = {};
+
+    /** A failed Task or Map: its Catch sets output, assigned and next, or the scope ends failed. */
+    const caught = async (error: StateError, scopeContext: unknown): Promise<Ending | undefined> => {
+      const errorOutput = { Error: error.error, Cause: error.cause };
+      const catcher = ((state["Catch"] as State[] | undefined) ?? []).find((c) => {
+        const equals = (c["ErrorEquals"] as string[] | undefined) ?? [];
+        return equals.includes(error.error) || equals.includes("States.ALL");
+      });
+      if (catcher === undefined) {
+        result.records.push({ state: name, input: value, output: errorOutput, variables });
+        return { kind: "failed", error: error.error, cause: error.cause };
+      }
+      const scope = { input: value, context: scopeContext, errorOutput };
+      output = catcher["Output"] === undefined ? errorOutput : await evaluate(catcher["Output"], scope, variables);
+      assigned = await evaluateAssign(catcher["Assign"], scope, variables);
+      next = catcher["Next"] as string;
+      return undefined;
+    };
 
     switch (state["Type"]) {
       case "Pass":
@@ -147,11 +198,7 @@ export async function simulate(definition: unknown, input: unknown, options: Sim
         output = branch["Output"] === undefined ? value : await evaluate(branch["Output"], base, variables);
         assigned = await evaluateAssign(branch["Assign"], base, variables);
         next = (chosen === undefined ? state["Default"] : chosen["Next"]) as string | undefined;
-        if (next === undefined) {
-          result.status = "FAILED";
-          result.error = "States.NoChoiceMatched";
-          return result;
-        }
+        if (next === undefined) return { kind: "failed", error: "States.NoChoiceMatched", cause: name };
         break;
       }
       case "Task": {
@@ -159,8 +206,8 @@ export async function simulate(definition: unknown, input: unknown, options: Sim
         if (resource !== RUN_TASK_SYNC && resource !== RUN_TASK_WAIT_FOR_TOKEN) throw new Error(`${name}: unsupported resource ${String(resource)}`);
         let taskToken: string | undefined;
         if (resource === RUN_TASK_WAIT_FOR_TOKEN) {
-          tokens += 1;
-          taskToken = `task-token-${String(tokens)}`;
+          run.tokens += 1;
+          taskToken = `task-token-${String(run.tokens)}`;
         }
         const taskContext = { ...context, ...(taskToken === undefined ? {} : { Task: { Token: taskToken } }) };
         const args = (await evaluate(state["Arguments"], { input: value, context: taskContext }, variables)) as Record<string, unknown>;
@@ -175,44 +222,61 @@ export async function simulate(definition: unknown, input: unknown, options: Sim
           next = nextOf(name, state);
         } catch (error) {
           if (!(error instanceof StateError)) throw error;
-          const errorOutput = { Error: error.error, Cause: error.cause };
-          const catcher = ((state["Catch"] as State[] | undefined) ?? []).find((c) => {
-            const equals = (c["ErrorEquals"] as string[] | undefined) ?? [];
-            return equals.includes(error.error) || equals.includes("States.ALL");
-          });
-          if (catcher === undefined) {
-            result.records.push({ state: name, input: value, output: errorOutput, variables });
-            result.status = "FAILED";
-            result.error = error.error;
-            return result;
-          }
-          const caught = { input: value, context: taskContext, errorOutput };
-          output = catcher["Output"] === undefined ? errorOutput : await evaluate(catcher["Output"], caught, variables);
-          assigned = await evaluateAssign(catcher["Assign"], caught, variables);
-          next = catcher["Next"] as string;
+          const ending = await caught(error, taskContext);
+          if (ending !== undefined) return ending;
         }
+        break;
+      }
+      case "Map": {
+        if (state["MaxConcurrency"] !== 1) throw new Error(`${name}: the simulator runs Map items one at a time only (MaxConcurrency 1)`);
+        const processor = state["ItemProcessor"] as { ProcessorConfig?: { Mode?: unknown }; StartAt: string; States: Record<string, State> } | undefined;
+        if (processor?.ProcessorConfig?.Mode !== "INLINE") throw new Error(`${name}: only inline Map processors are modelled`);
+        const items = await evaluate(state["Items"], base, variables);
+        if (!Array.isArray(items)) throw new Error(`${name}: Items must be an array`);
+
+        const inner = new Set([...outer, ...Object.keys(variables)]);
+        const outputs: unknown[] = [];
+        let failure: StateError | undefined;
+        for (const item of items) {
+          const ending = await execute(run, processor, item, variables, inner);
+          if (ending.kind === "failed") {
+            failure = new StateError(ending.error, ending.cause);
+            break;
+          }
+          outputs.push(ending.output);
+        }
+        if (failure !== undefined) {
+          const ending = await caught(failure, context);
+          if (ending !== undefined) return ending;
+          break;
+        }
+        const after = { input: value, context, result: outputs };
+        output = state["Output"] === undefined ? outputs : await evaluate(state["Output"], after, variables);
+        assigned = await evaluateAssign(state["Assign"], after, variables);
+        next = nextOf(name, state);
         break;
       }
       case "Succeed":
         output = state["Output"] === undefined ? value : await evaluate(state["Output"], base, variables);
         result.records.push({ state: name, input: value, output, variables });
-        result.status = "SUCCEEDED";
-        return result;
+        return { kind: "succeeded", output };
       case "Fail":
         result.records.push({ state: name, input: value, output: undefined, variables });
-        result.status = "FAILED";
-        result.error = String(state["Error"]);
-        return result;
+        return { kind: "failed", error: String(state["Error"]), cause: typeof state["Cause"] === "string" ? state["Cause"] : "" };
       default:
         throw new Error(`${name}: unsupported state type ${String(state["Type"])}`);
     }
 
+    for (const key of Object.keys(assigned)) {
+      if (outer.has(key)) throw new Error(`${name}: assigns $${key}, a variable of an outer scope`);
+    }
     variables = { ...variables, ...assigned };
     result.records.push({ state: name, input: value, output, variables });
     value = output;
     current = next;
   }
-  throw new Error(`state ${result.path.at(-1) ?? ""} has neither Next nor End`);
+  // The last state had End: true.
+  return { kind: "succeeded", output: value };
 }
 
 function checkFields(name: string, state: State): void {

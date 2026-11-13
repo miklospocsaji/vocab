@@ -85,19 +85,19 @@ Scenarios carried unchanged inside MODIFIED requirements keep their existing tes
 
 ### Worker and state machine
 
-- [ ] 4.1 Failing worker tests for the states `design`, `plan` (task token, `SendTaskSuccess` with ids, `SendTaskFailure` on error), `step` and `open-pr`. Scenarios:
+- [x] 4.1 Failing worker tests for the states `design`, `plan` (task token, `SendTaskSuccess` with ids, `SendTaskFailure` on error), `step` and `open-pr`. Scenarios:
   - Unknown state is refused
   - Failed resume is reported on the issue
   - Owner's approval resumes the execution (now naming the approval)
   - Worker reports an escalation (unchanged, re-run)
-- [ ] 4.2 Write the worker states and the store wiring (`S3Store` from `FACTORY_STORE_BUCKET`).
-- [ ] 4.3 Failing tests on `definition()`: the routes of the diagram in `design.md`, the Map's concurrency 1 and items from `$tasks`, `DesignFlaw` caught into Design, and `WorkItemEscalated` into Escalated. Scenario: Execution history holds no artifacts or secrets (static half: every state's arguments hold only the issue number, task ids, the execution ARN, exit codes and task tokens).
-- [ ] 4.4 Write the state machine.
+- [x] 4.2 Write the worker states and the store wiring (`S3Store` from `FACTORY_STORE_BUCKET`).
+- [x] 4.3 Failing tests on `definition()`: the routes of the diagram in `design.md`, the Map's concurrency 1 and items from `$tasks`, `DesignFlaw` caught into Design, and `WorkItemEscalated` into Escalated. Scenario: Execution history holds no artifacts or secrets (static half: every state's arguments hold only the issue number, the change id, task ids, the execution ARN, exit codes and task tokens).
+- [x] 4.4 Write the state machine.
 
 ### Stack
 
-- [ ] 4.5 Failing CDK assertion tests. Scenario: Build task cannot reach the factory's secrets. Also: the bucket blocks public access, enforces TLS and expires objects after 180 days; the worker role reads and writes the bucket; the state machine may run only the worker and build families and pass only their roles; the build task definition's image is the Dockerfile's `build` target.
-- [ ] 4.6 Write the bucket, the build task definition, its security group and the IAM changes.
+- [x] 4.5 Failing CDK assertion tests. Scenario: Build task cannot reach the factory's secrets. Also: the bucket blocks public access, enforces TLS and expires objects after 180 days; the worker role reads and writes the bucket; the state machine may run only the worker and build families and pass only their roles; the build task definition's image is the Dockerfile's `build` target.
+- [x] 4.6 Write the bucket, the build task definition, its security group and the IAM changes.
 - [ ] 4.7 With the owner: enable Pull requests read and write in the App's settings and accept it on the installation. Amend ADRs 0002, 0003 and 0009.
 - [ ] 4.8 Failing cloud test `factory/worker/test/build-boundaries.cloud.test.ts`, running the build task definition with a probe input. Scenario: Build boundaries hold in Fargate (budget under $0.10). Then confirm with the owner, run `pnpm infra:diff`, `pnpm infra:deploy` and `pnpm test:cloud`, and record the results in `design.md`.
 

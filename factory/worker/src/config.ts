@@ -8,34 +8,49 @@ import type pg from "pg";
 import { connectionFromSecret, DATABASE_URL_VAR, LEDGER_SECRET_VAR } from "@vocab/factory-ledger";
 import { ESCALATION_REASONS, type EscalationReason } from "@vocab/factory-orchestrator";
 
-/** The states this worker runs: one per state machine state (add-cloud-proposal-run). */
-export const WORKER_STATES = ["intake", "proposal", "await-approval", "approve", "approved", "escalate"] as const;
+/** The states this worker runs: one per state machine state (add-cloud-proposal-run, add-build-loop). */
+export const WORKER_STATES = ["intake", "proposal", "await-approval", "approve", "approved", "design", "plan", "step", "open-pr", "escalate"] as const;
 export type WorkerState = (typeof WORKER_STATES)[number];
 
 export const USAGE = [
   "Usage: factory-worker <state> --issue <n> [options]",
   "  intake --issue <n> [--execution <arn>]",
   "  proposal --issue <n>",
-  "  await-approval --issue <n>          (the task token in FACTORY_TASK_TOKEN)",
+  "  await-approval --issue <n> [--kind proposal|design]   (the task token in FACTORY_TASK_TOKEN)",
   "  approve --issue <n> --by <login>",
   "  approved --issue <n>",
+  "  design --issue <n>",
+  "  plan --issue <n>                    (the task token in FACTORY_TASK_TOKEN)",
+  "  step --issue <n> --task <id>",
+  "  open-pr --issue <n>",
   `  escalate --issue <n> --reason <${ESCALATION_REASONS.join("|")}>`,
   "",
 ].join("\n");
 
 /** The options each state takes besides `--issue`, and whether it needs them. */
-const OPTIONS: Record<WorkerState, Partial<Record<"execution" | "by" | "reason", "optional" | "required">>> = {
+const OPTIONS: Record<WorkerState, Partial<Record<OptionName, "optional" | "required">>> = {
   intake: { execution: "optional" },
   proposal: {},
-  "await-approval": {},
+  "await-approval": { kind: "optional" },
   approve: { by: "required" },
   approved: {},
+  design: {},
+  plan: {},
+  step: { task: "required" },
+  "open-pr": {},
   escalate: { reason: "required" },
 };
+type OptionName = "execution" | "by" | "reason" | "task" | "kind";
+const OPTION_NAMES: readonly OptionName[] = ["execution", "by", "reason", "task", "kind"];
+
+/** The approvals `await-approval` opens. */
+export const APPROVAL_KINDS = ["proposal", "design"] as const;
 
 const EXECUTION_ARN = /^arn:aws[a-z-]*:states:[a-z0-9-]+:[0-9]{12}:execution:[A-Za-z0-9_-]+:[A-Za-z0-9_-]{1,80}$/;
 /** A GitHub login: alphanumerics and single hyphens, at most 39 characters. */
 const LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+/** A plan's task id, as the plan result schema has it: 1.1, 2.3.1. */
+const TASK_ID = /^\d{1,4}(\.\d{1,4}){1,4}$/;
 
 export interface WorkerArgs {
   state: WorkerState;
@@ -46,6 +61,10 @@ export interface WorkerArgs {
   by?: string;
   /** escalate: why, as a fixed code. */
   reason?: EscalationReason;
+  /** step: the task's id in the plan. */
+  taskId?: string;
+  /** await-approval: which approval it opens; defaults to `proposal`. */
+  kind?: (typeof APPROVAL_KINDS)[number];
 }
 
 export type ParsedArgs = ({ ok: true } & WorkerArgs) | { ok: false; message: string };
@@ -53,13 +72,20 @@ export type ParsedArgs = ({ ok: true } & WorkerArgs) | { ok: false; message: str
 /** Reads `<state> --issue <n>` and the state's options; never throws. */
 export function parseWorkerArgs(argv: string[]): ParsedArgs {
   let positionals: string[];
-  let values: { issue?: string | undefined; execution?: string | undefined; by?: string | undefined; reason?: string | undefined };
+  let values: Partial<Record<"issue" | OptionName, string | undefined>>;
   try {
     const parsed = parseArgs({
       args: argv,
       allowPositionals: true,
       strict: true,
-      options: { issue: { type: "string" }, execution: { type: "string" }, by: { type: "string" }, reason: { type: "string" } },
+      options: {
+        issue: { type: "string" },
+        execution: { type: "string" },
+        by: { type: "string" },
+        reason: { type: "string" },
+        task: { type: "string" },
+        kind: { type: "string" },
+      },
     });
     positionals = parsed.positionals;
     values = parsed.values;
@@ -77,14 +103,16 @@ export function parseWorkerArgs(argv: string[]): ParsedArgs {
   }
 
   const options = OPTIONS[state];
-  for (const name of ["execution", "by", "reason"] as const) {
+  for (const name of OPTION_NAMES) {
     if (values[name] !== undefined && options[name] === undefined) return { ok: false, message: `${state} takes no --${name}` };
     if (values[name] === undefined && options[name] === "required") return { ok: false, message: `${state} needs --${name}` };
   }
-  const { execution, by, reason } = values;
+  const { execution, by, reason, task, kind } = values;
   if (execution !== undefined && !EXECUTION_ARN.test(execution)) return { ok: false, message: "--execution must be a Step Functions execution ARN" };
   if (by !== undefined && !LOGIN.test(by)) return { ok: false, message: "--by must be a GitHub login" };
   if (reason !== undefined && !isEscalationReason(reason)) return { ok: false, message: `--reason must be one of ${ESCALATION_REASONS.join(", ")}` };
+  if (task !== undefined && !TASK_ID.test(task)) return { ok: false, message: "--task must be a task id such as 1.1" };
+  if (kind !== undefined && !isApprovalKind(kind)) return { ok: false, message: `--kind must be one of ${APPROVAL_KINDS.join(", ")}` };
 
   return {
     ok: true,
@@ -93,7 +121,13 @@ export function parseWorkerArgs(argv: string[]): ParsedArgs {
     ...(execution === undefined ? {} : { executionArn: execution }),
     ...(by === undefined ? {} : { by }),
     ...(reason === undefined ? {} : { reason }),
+    ...(task === undefined ? {} : { taskId: task }),
+    ...(kind === undefined ? {} : { kind }),
   };
+}
+
+function isApprovalKind(value: string): value is (typeof APPROVAL_KINDS)[number] {
+  return (APPROVAL_KINDS as readonly string[]).includes(value);
 }
 
 function isWorkerState(value: string): value is WorkerState {
@@ -105,8 +139,10 @@ function isEscalationReason(value: string): value is EscalationReason {
 }
 
 export const ENV = {
-  /** AwaitApproval's task token, set by the state machine as an environment override. */
+  /** The task token of AwaitApproval and Plan, set by the state machine as an environment override. */
   taskToken: "FACTORY_TASK_TOKEN",
+  /** The artifact bucket the worker and the build task share. */
+  storeBucket: "FACTORY_STORE_BUCKET",
   repository: "FACTORY_GITHUB_REPOSITORY",
   appId: "FACTORY_GITHUB_APP_ID",
   installationId: "FACTORY_GITHUB_APP_INSTALLATION_ID",

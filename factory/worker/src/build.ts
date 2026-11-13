@@ -3,6 +3,10 @@
  * container (ADR 0011; add-build-roles design.md, "The build container"). Every dependency is
  * passed in; `build-main.ts` wires in the real ones.
  *
+ * `factory-build build --change <id> --task <id>` is the same attempt as the cloud's Build state
+ * starts it (add-build-loop design, "Build task invocation"): the role, input key and, for a
+ * gates-only run, patch key come from the task's `next.json`, which `step` wrote.
+ *
  * 1. Refuse to start (exit 2) if the environment holds any factory credential other than the
  *    model credential. The error names the variable, never its value.
  * 2. Read `input.json` from the store; check it, and that the role runs in the build container.
@@ -40,6 +44,7 @@ import {
   type Role,
   type RunRole,
 } from "@vocab/factory-roles";
+import { nextBuildKey, parseNextBuild } from "@vocab/factory-orchestrator";
 import { z } from "zod";
 import { checkKey, InvalidStoreKey, type ArtifactStore } from "./store.ts";
 
@@ -48,7 +53,7 @@ const MAX_BUFFER = 64 * 1024 * 1024;
 
 export const BUILD_EXIT = { ok: 0, error: 1, invalid: 2 } as const;
 
-export const BUILD_USAGE = "Usage: factory-build <role> --input <key> [--patch <key>]\n";
+export const BUILD_USAGE = "Usage: factory-build <role> --input <key> [--patch <key>]\n       factory-build build --change <change id> --task <task id>\n";
 
 /** Factory credentials other than the model credential: the build container refuses to start with any of them (ADR 0011). */
 export const FACTORY_CREDENTIALS = [
@@ -72,6 +77,11 @@ const GATE_MODE: Readonly<Record<string, RunGatesOptions["mode"]>> = {
 
 const TASK_STUBS = "{taskStubs}";
 const ROLE_NAME = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+/** The positional that reads the attempt from the task's next.json. */
+const FROM_NEXT = "build";
+/** A change id (kebab-case, as Intake derives it) and a plan's task id. */
+const CHANGE_ID = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
+const TASK_ID = /^\d{1,4}(\.\d{1,4}){1,4}$/;
 
 /** `input.json`: what the worker hands one build container run. */
 export const BuildInput = z.strictObject({
@@ -123,7 +133,7 @@ export async function runBuild(argv: string[], deps: BuildDeps): Promise<number>
   const secrets = MODEL_CREDENTIALS.flatMap((name) => deps.env[name] ?? []);
 
   try {
-    const { roleName, inputKey, patchKey } = parseBuildArgs(argv);
+    const { roleName, inputKey, patchKey } = await resolveBuildArgs(deps.store, parseBuildArgs(argv));
     const input = await readInput(deps.store, inputKey);
     const role = await requireBuildRole(deps, roleName);
     const patch = patchKey === undefined ? undefined : await readPatch(deps.store, role, patchKey);
@@ -139,21 +149,63 @@ export async function runBuild(argv: string[], deps: BuildDeps): Promise<number>
   }
 }
 
-function parseBuildArgs(argv: string[]): { roleName: string; inputKey: string; patchKey: string | undefined } {
-  let positionals: string[];
-  let inputKey: string | undefined;
-  let patchKey: string | undefined;
+interface BuildArgs {
+  roleName: string;
+  inputKey: string;
+  patchKey: string | undefined;
+}
+
+/** `<role> --input` as given, or `build --change --task` read from the task's next.json. */
+async function resolveBuildArgs(store: ArtifactStore, args: BuildArgs | { changeId: string; taskId: string }): Promise<BuildArgs> {
+  if (!("changeId" in args)) return args;
+  const key = nextBuildKey(args.changeId, args.taskId);
+  let raw: string;
   try {
-    const parsed = parseArgs({ args: argv, allowPositionals: true, strict: true, options: { input: { type: "string" }, patch: { type: "string" } } });
+    raw = await store.get(key);
+  } catch (error) {
+    throw new InvalidInput(`cannot read the next build ${key}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  let next;
+  try {
+    next = parseNextBuild(raw);
+  } catch (error) {
+    throw new InvalidInput(`the next build ${key} is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return checkedArgs(next.role, next.input, next.mode === "gates-only" ? next.patch : undefined);
+}
+
+function parseBuildArgs(argv: string[]): BuildArgs | { changeId: string; taskId: string } {
+  let positionals: string[];
+  let values: { input?: string | undefined; patch?: string | undefined; change?: string | undefined; task?: string | undefined };
+  try {
+    const parsed = parseArgs({
+      args: argv,
+      allowPositionals: true,
+      strict: true,
+      options: { input: { type: "string" }, patch: { type: "string" }, change: { type: "string" }, task: { type: "string" } },
+    });
     positionals = parsed.positionals;
-    inputKey = parsed.values.input;
-    patchKey = parsed.values.patch;
+    values = parsed.values;
   } catch (error) {
     throw new InvalidInput(`usage: ${error instanceof Error ? error.message : String(error)}`);
   }
   const [roleName, ...rest] = positionals;
   if (roleName === undefined) throw new InvalidInput("usage: no role given");
   if (rest.length > 0) throw new InvalidInput(`usage: unexpected argument ${rest[0] ?? ""}`);
+
+  if (roleName === FROM_NEXT) {
+    const { change, task } = values;
+    if (values.input !== undefined || values.patch !== undefined) throw new InvalidInput("usage: build takes --change and --task, not --input or --patch");
+    if (change === undefined || task === undefined) throw new InvalidInput("usage: build needs --change and --task");
+    if (!CHANGE_ID.test(change)) throw new InvalidInput("usage: --change must be a change id");
+    if (!TASK_ID.test(task)) throw new InvalidInput("usage: --task must be a task id such as 1.1");
+    return { changeId: change, taskId: task };
+  }
+  if (values.change !== undefined || values.task !== undefined) throw new InvalidInput("usage: --change and --task go with build, not a role");
+  return checkedArgs(roleName, values.input, values.patch);
+}
+
+function checkedArgs(roleName: string, inputKey: string | undefined, patchKey: string | undefined): BuildArgs {
   if (!ROLE_NAME.test(roleName)) throw new InvalidInput("usage: the role must be a role name");
   if (inputKey === undefined) throw new InvalidInput("usage: --input is required");
   try {

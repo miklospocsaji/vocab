@@ -2,13 +2,14 @@
  * The artifact store between the worker and the build container (add-build-roles design.md):
  * `get`, `put` and `exists` on text bodies under keys such as
  * `work-items/<changeId>/tasks/<taskId>/<role>/<attempt>/<file>`. `FsStore` maps keys under a
- * directory, for local runs and tests; `S3Store` is the cloud's bucket (add-build-loop). Both
+ * directory, for local runs and tests; `S3Store` is the cloud's bucket (add-build-loop), and
+ * `storeFromEnv` picks one from the environment for the worker and the build container. Both
  * refuse a key that could leave its root: empty, absolute, with an empty, `.` or `..` segment, or
  * with a backslash.
  */
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { GetObjectCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 export interface ArtifactStore {
   /** Rejects when the key does not exist. */
@@ -74,6 +75,25 @@ export class FsStore implements ArtifactStore {
     return join(this.root, checkKey(key));
   }
 }
+
+/** The directory store of local runs and the bucket of the cloud, by their environment variables. */
+export const STORE_ENV = { dir: "FACTORY_STORE_DIR", bucket: "FACTORY_STORE_BUCKET" } as const;
+
+/**
+ * The store the environment names: the directory `FACTORY_STORE_DIR` (local runs mount it at
+ * `/store`), otherwise the bucket `FACTORY_STORE_BUCKET` through `makeClient`'s S3 client;
+ * undefined when neither is set.
+ */
+export function storeFromEnv(env: Record<string, string | undefined>, makeClient: () => S3Sender = () => new S3Client({ region: env["AWS_REGION"] ?? DEFAULT_REGION })): ArtifactStore | undefined {
+  const dir = env[STORE_ENV.dir]?.trim();
+  if (dir !== undefined && dir !== "") return new FsStore(dir);
+  const bucket = env[STORE_ENV.bucket]?.trim();
+  if (bucket !== undefined && bucket !== "") return new S3Store({ bucket, client: makeClient() });
+  return undefined;
+}
+
+/** The factory's region (brief, section 5), if the task's environment does not name one. */
+const DEFAULT_REGION = "eu-central-1";
 
 /** The part of `S3Client` the store uses, so tests can pass a fake. */
 export interface S3Sender {

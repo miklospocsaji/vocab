@@ -13,6 +13,16 @@ export const WORKER_EXIT = {
   escalated: 3,
   /** The run ends with no work item to continue: a rejected issue, or one with another execution's work item. */
   ended: 4,
+  /** Approved: a `small` change skips Design and goes to Plan. */
+  skipDesign: 10,
+  /** Design: a `large` change's design waits for the owner. */
+  ownerDesignReview: 11,
+  /** Step: the task failed with a design flaw; the work item goes back to Design. */
+  designFlaw: 13,
+  /** Step: the next build's input is written. */
+  build: 20,
+  /** Step: an infrastructure failure; build again after a wait. */
+  buildAfterWait: 21,
 } as const;
 
 /** Fixed codes, never environment values or an ECS message (design, "Worker states"). */

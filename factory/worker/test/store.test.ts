@@ -1,10 +1,11 @@
 // The artifact store (add-build-roles task 2.10): a directory for local runs and tests, S3 in the cloud.
+// The store an environment names (add-build-loop task 4.1).
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GetObjectCommand, HeadObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { FsStore, InvalidStoreKey, S3Store, type ArtifactStore, type S3Sender } from "../src/store.ts";
+import { FsStore, InvalidStoreKey, S3Store, storeFromEnv, type ArtifactStore, type S3Sender } from "../src/store.ts";
 
 const KEY = "work-items/add-sample/tasks/1.1/implementer/1/outcome.json";
 const BAD_KEYS = ["", "../outside.json", "work-items/../../etc/passwd", "work-items/a/..", "/absolute.json", "work-items//double.json", "work-items\\windows.json"];
@@ -124,5 +125,30 @@ describe("S3Store", () => {
     const client = new FakeS3();
     await expect(new S3Store({ bucket: "factory-artifacts", client }).put("../x", "x")).rejects.toBeInstanceOf(InvalidStoreKey);
     expect(client.sent).toEqual([]);
+  });
+});
+
+describe("storeFromEnv", () => {
+  it("is the directory FACTORY_STORE_DIR, as local runs mount it", () => {
+    const store = storeFromEnv({ FACTORY_STORE_DIR: root });
+    expect(store).toBeInstanceOf(FsStore);
+    expect((store as FsStore).root).toBe(root);
+  });
+
+  it("is the bucket FACTORY_STORE_BUCKET in the cloud, through the given client", async () => {
+    const client = new FakeS3();
+    const store = storeFromEnv({ FACTORY_STORE_BUCKET: "factory-artifacts-123" }, () => client);
+    expect(store).toBeInstanceOf(S3Store);
+    expect((store as S3Store).bucket).toBe("factory-artifacts-123");
+    await store?.put(KEY, "x");
+    expect(client.sent.map((command) => command.input.Bucket)).toEqual(["factory-artifacts-123"]);
+  });
+
+  it("prefers the directory when both are set, and is undefined when neither is", () => {
+    expect(storeFromEnv({ FACTORY_STORE_DIR: root, FACTORY_STORE_BUCKET: "factory-artifacts-123" }, () => new FakeS3())).toBeInstanceOf(FsStore);
+    expect(storeFromEnv({})).toBeUndefined();
+    expect(storeFromEnv({ FACTORY_STORE_DIR: "", FACTORY_STORE_BUCKET: " " })).toBeUndefined();
+    // The old name of add-build-roles is not read.
+    expect(storeFromEnv({ FACTORY_ARTIFACT_BUCKET: "factory-artifacts-123" })).toBeUndefined();
   });
 });
