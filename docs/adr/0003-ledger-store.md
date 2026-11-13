@@ -1,6 +1,6 @@
 # 0003 Ledger store
 
-Status: accepted (2026-10-27; owner decision of 2026-10-26); amended 2026-11-06 (no private subnets, results in the ledger until M3)
+Status: accepted (2026-10-27; owner decision of 2026-10-26); amended 2026-11-06 (no private subnets, results in the ledger until M3) and 2026-11-13 (results in the ledger, build outputs in S3)
 
 ## Context
 
@@ -33,3 +33,20 @@ With no egress control (ADR 0008, owner decision of 2026-11-02), the factory's V
 - Nothing wakes Aurora but the worker, so auto-pause holds while the factory is idle.
 
 Until M3, a role's validated JSON result is stored on its attempt in the ledger (`attempts.result`), not in S3. One small result per attempt does not justify a bucket yet. S3 arrives in M3 with larger artifacts, as the brief's section 3 describes, and the ledger then stores their keys as decided above.
+
+## Amendment 2026-11-13: results in the ledger, build outputs in S3
+
+The amendment of 2026-11-06 planned S3 for every result from M3. M3 (add-build-loop) splits them instead:
+- **Role results stay on their attempts in the ledger** (`attempts.result`), for every role: proposal, design, review, plan, classification, and the build roles' results from their outcomes. They are small JSON that the summary comments, the console (M6) and the benchmark (M7) query.
+- **Build outputs go to S3.** These are large: patches, gate output, message streams. And the build task cannot reach the ledger (ADR 0011). Per task, under `work-items/<changeId>/tasks/<taskId>/`:
+  - `next.json`, which build runs next
+  - one folder per build attempt, `<role>/<n>/`, holding `input.json` from the worker, and `patch.diff`, `gates.json`, `messages.jsonl` and, last, `outcome.json` from the build
+
+  The ledger keeps the attempt's prefix (`attempts.store_prefix`), its gates result and its classification. The worker replays `messages.jsonl` into the ledger, so tokens and cost are queried as before.
+- **The bucket:** one per stack. It blocks all public access, refuses requests without TLS, uses S3-managed encryption, has no versioning, expires objects after 180 days, and is retained when the stack is deleted.
+- **Access:**
+  - The worker gets and puts `work-items/*` and may list that prefix, so that a missing key is a 404 rather than a 403.
+  - The build task may only get and put `work-items/*`.
+  - Locally, the same keys live under `~/.factory/store` (`FsStore`).
+  - Both containers pick the store from `FACTORY_STORE_DIR` or `FACTORY_STORE_BUCKET`.
+- Screenshots (M4) will follow the same pattern: objects in the bucket, keys in the ledger.

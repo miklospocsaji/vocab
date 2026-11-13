@@ -1,6 +1,6 @@
 # 0009 GitHub App auth
 
-Status: accepted (2026-11-02; owner decisions of 2026-11-02)
+Status: accepted (2026-11-02; owner decisions of 2026-11-02); amended 2026-11-13 (pull requests)
 
 ## Context
 
@@ -33,3 +33,17 @@ M1 acted on GitHub with the owner's `gh` token, so its work looked like the owne
 - A leaked installation token is limited to this repository and expires within an hour.
 - The factory's commits and comments are visibly its own.
 - A pull request's `/approve` does nothing until M3 extends the command.
+
+## Amendment 2026-11-13: the App opens pull requests
+
+M3 (add-build-loop) ends a work item with a pull request from its change branch to `master`, opened by the factory:
+- **Permissions:** Pull requests read and write, added to Contents read and write, Issues read and write and Metadata read. The owner enables it in the App's settings and accepts the new permission on the installation. Until then, the installation token request fails, since it asks for a permission the installation lacks.
+- **Each installation token** is requested with exactly `contents: write`, `issues: write`, `pull_requests: write` and `metadata: read`, still for this repository only.
+- **The Forge** gains `openPullRequest` (`POST /repos/{owner}/{repo}/pulls`) and `findPullRequest` (`GET …/pulls?head=<owner>:<branch>&state=open`). `open-pr` reuses an open pull request, so a repeated state opens no second one. The pull request is the App's: its author is `vocab-factory[bot]`.
+- **The factory never merges.** The owner reviews and merges. The PR's CI run of `pnpm check` is the independent check (ADR 0011).
+- **`/approve` on a pull request still does nothing.** The webhook ignores comments on pull requests, as before.
+
+Consequences:
+- A leaked installation token or private key can now also open, comment on and merge pull requests on this repository. Contents write already allowed pushing to any branch, `master` included.
+- Branch protection on `master` stops both (owner, 2026-11-13). Every change reaches `master` through a pull request whose `check` job (`pnpm check` in CI, from GitHub Actions only) is green. No one may push to `master` directly, force-push or delete it, and the rule binds admins too. It requires no approving review: the owner is the only human collaborator and cannot approve their own pull requests.
+- So a leaked credential or a factory bug can still change the change branches, and can open and merge a pull request whose CI is green. It can no longer write to `master` past CI. The factory itself never merges.

@@ -1,5 +1,6 @@
 /**
- * CDK assertions on the factory stack (add-cloud-proposal-run tasks 2.3 and 3.8), synthesised
+ * CDK assertions on the factory stack (add-cloud-proposal-run tasks 2.3 and 3.8, add-build-loop
+ * task 4.5), synthesised
  * with bundling skipped. The worker image's build context is staged, but never built, and the
  * webhook Lambda is not bundled.
  */
@@ -191,6 +192,7 @@ describe("factory stack: worker", () => {
       FACTORY_GITHUB_APP_ID: String(GITHUB.appId),
       FACTORY_GITHUB_APP_INSTALLATION_ID: String(GITHUB.installationId),
       FACTORY_GITHUB_APP_SLUG: GITHUB.slug,
+      FACTORY_STORE_BUCKET: { Ref: artifactBucket() },
     });
 
     // The webhook secret is the Lambda's alone (ADR 0009): neither the worker nor its roles name it.
@@ -226,8 +228,8 @@ describe("factory stack: worker", () => {
 
   it("runs the worker image on Fargate, 1 vCPU and 2 GB, linux/amd64", () => {
     template.resourceCountIs("AWS::ECS::Cluster", 1);
-    // The worker's, and the boundary check's (below).
-    template.resourceCountIs("AWS::ECS::TaskDefinition", 2);
+    // The worker's, the boundary check's, the build task's and the build boundary check's (below).
+    template.resourceCountIs("AWS::ECS::TaskDefinition", 4);
     template.hasResourceProperties("AWS::ECS::TaskDefinition", {
       RequiresCompatibilities: ["FARGATE"],
       NetworkMode: "awsvpc",
@@ -250,21 +252,29 @@ describe("factory stack: worker", () => {
     expect(stack.resolve(stack.workerNetwork.securityGroup.securityGroupId)).toEqual({ "Fn::GetAtt": [worker, "GroupId"] });
   });
 
-  it("lets the task role only send task success and failure to this state machine's tasks", () => {
+  it("lets the task role only send task success and failure to this state machine's tasks, and read and write the artifact bucket", () => {
     const taskDefinition = taskDefinitionOf("WorkerTaskDefinitionArn");
     const taskRole = target(taskDefinition["TaskRoleArn"]);
     if (taskRole === undefined) throw new Error("the task definition has no task role");
 
     const statements = policiesOf(taskRole).flatMap((policy) => policy.Statement);
-    expect(statements).toEqual([
-      {
-        Effect: "Allow",
-        Action: ["states:SendTaskFailure", "states:SendTaskSuccess"],
-        Resource: {
-          "Fn::Join": ["", ["arn:", { Ref: "AWS::Partition" }, `:states:${REGION}:${ACCOUNT}:stateMachine:${STATE_MACHINE_NAME}`]],
+    expect(statements).toEqual(
+      expect.arrayContaining([
+        {
+          Effect: "Allow",
+          Action: ["states:SendTaskFailure", "states:SendTaskSuccess"],
+          Resource: {
+            "Fn::Join": ["", ["arn:", { Ref: "AWS::Partition" }, `:states:${REGION}:${ACCOUNT}:stateMachine:${STATE_MACHINE_NAME}`]],
+          },
         },
-      },
-    ]);
+      ]),
+    );
+    // The bucket: objects under work-items/ read and written, and listed, so a missing key is a 404, not a 403.
+    const s3 = statementsOf(taskRole).filter((statement) => statement.Action.some((action) => action.startsWith("s3:")));
+    expect(new Set(s3.flatMap((statement) => statement.Action))).toEqual(new Set(["s3:GetObject", "s3:PutObject", "s3:ListBucket"]));
+    for (const action of ["s3:GetObject", "s3:PutObject"]) expect(resourcesFor(s3, action)).toEqual([bucketObjects()]);
+    expect(resourcesFor(s3, "s3:ListBucket")).toEqual([{ "Fn::GetAtt": [artifactBucket(), "Arn"] }]);
+    expect(statements).toHaveLength(1 + s3.length);
     expect(resources[taskRole]?.Properties?.["ManagedPolicyArns"]).toBeUndefined();
   });
 
@@ -370,7 +380,8 @@ describe("factory stack: boundary check", () => {
     const assets = dockerAssets();
     const worker = assets[imageHash(onlyContainer(taskDefinitionOf("WorkerTaskDefinitionArn")))]?.source;
     const check = assets[imageHash(onlyContainer(taskDefinitionOf("BoundaryCheckTaskDefinitionArn")))]?.source;
-    expect(Object.keys(assets)).toHaveLength(2);
+    // The worker's, the boundary check's and the build task's.
+    expect(Object.keys(assets)).toHaveLength(3);
     expect(worker).toMatchObject({ dockerFile: "factory/worker/Dockerfile", platform: "linux/amd64" });
     expect(worker).not.toHaveProperty("dockerBuildTarget");
     expect(omit(check ?? {}, "directory")).toEqual({ ...omit(worker ?? {}, "directory"), dockerBuildTarget: BOUNDARY_CHECK_TARGET });
@@ -542,11 +553,13 @@ describe("factory stack: state machine", () => {
     const [, machine] = only("AWS::StepFunctions::StateMachine");
     const definition = JSON.stringify(machine["DefinitionString"]);
     expect(definition).toContain(`\\"TaskDefinition\\":\\"${workerFamily()}\\"`);
+    expect(definition).toContain(`\\"TaskDefinition\\":\\"${buildFamily()}\\"`);
     expect(definition).not.toContain(outputTarget("WorkerTaskDefinitionArn"));
+    expect(definition).not.toContain(outputTarget("BuildTaskDefinitionArn"));
     expect(definition).not.toMatch(/task-definition\//);
   });
 
-  it("may run only the worker task definition and pass only its roles", () => {
+  it("may run only the worker and build task definitions and pass only their roles", () => {
     const [, machine] = only("AWS::StepFunctions::StateMachine");
     const role = target(machine["RoleArn"]) ?? "";
     const statements = statementsOf(role);
@@ -554,8 +567,15 @@ describe("factory stack: state machine", () => {
     expect(new Set(statements.flatMap((statement) => statement.Action))).toEqual(
       new Set(["ecs:RunTask", "ecs:StopTask", "ecs:DescribeTasks", "iam:PassRole", "events:PutTargets", "events:PutRule", "events:DescribeRule"]),
     );
-    expectWorkerFamilyOnly(resourcesFor(statements, "ecs:RunTask"));
-    expect(new Set(resourcesFor(statements, "iam:PassRole").map(target))).toEqual(new Set(workerRoles()));
+    // Each family at any revision, in the factory's cluster, and nothing else.
+    const runTask = resourcesFor(statements, "ecs:RunTask").map((resource) => JSON.stringify(resource));
+    expect(runTask).toHaveLength(2);
+    expect(runTask.filter((text) => text.includes(`:task-definition/${workerFamily()}:*`))).toHaveLength(1);
+    expect(runTask.filter((text) => text.includes(`:task-definition/${buildFamily()}:*`))).toHaveLength(1);
+    for (const text of runTask) expect(text).not.toContain(String(taskDefinitionOf("BoundaryCheckTaskDefinitionArn")["Family"]));
+    for (const text of runTask) expect(text).not.toContain(String(taskDefinitionOf("BuildBoundaryCheckTaskDefinitionArn")["Family"]));
+    for (const statement of statements.filter((s) => s.Action.includes("ecs:RunTask"))) expect(JSON.stringify(statement.Condition)).toContain(outputTarget("ClusterArn"));
+    expect(new Set(resourcesFor(statements, "iam:PassRole").map(target))).toEqual(new Set([...workerRoles(), ...buildRoles()]));
     // StopTask and DescribeTasks for the `.sync` integration, on the factory cluster's tasks only.
     for (const action of ["ecs:StopTask", "ecs:DescribeTasks"]) {
       for (const resource of resourcesFor(statements, action)) {
@@ -569,5 +589,159 @@ describe("factory stack: state machine", () => {
     }
     expect(JSON.stringify(policiesOf(role))).not.toContain(outputTarget("BoundaryCheckTaskDefinitionArn"));
     expect(resources[role]?.Properties?.["ManagedPolicyArns"]).toBeUndefined();
+  });
+});
+
+/** The artifact bucket's logical id, from the stack output. */
+function artifactBucket(): string {
+  const id = outputTarget("ArtifactBucketName");
+  if (resources[id]?.Type !== "AWS::S3::Bucket") throw new Error("ArtifactBucketName names no bucket");
+  return id;
+}
+
+/** `<bucket ARN>/work-items/*`, as CDK writes it. */
+function bucketObjects(): unknown {
+  return { "Fn::Join": ["", [{ "Fn::GetAtt": [artifactBucket(), "Arn"] }, "/work-items/*"]] };
+}
+
+function buildFamily(): string {
+  const family = taskDefinitionOf("BuildTaskDefinitionArn")["Family"];
+  if (typeof family !== "string" || family === "") throw new Error("the build task definition has no literal family");
+  return family;
+}
+
+function buildRoles(): string[] {
+  const taskDefinition = taskDefinitionOf("BuildTaskDefinitionArn");
+  return [target(taskDefinition["TaskRoleArn"]), target(taskDefinition["ExecutionRoleArn"])].map((role) => role ?? "");
+}
+
+describe("factory stack: artifact bucket", () => {
+  it("blocks public access, refuses requests without TLS, and expires objects after 180 days", () => {
+    template.resourceCountIs("AWS::S3::Bucket", 1);
+    const bucket = resources[artifactBucket()] as Resource & { DeletionPolicy?: string };
+    expect(bucket.Properties?.["PublicAccessBlockConfiguration"]).toEqual({
+      BlockPublicAcls: true,
+      BlockPublicPolicy: true,
+      IgnorePublicAcls: true,
+      RestrictPublicBuckets: true,
+    });
+    expect(bucket.Properties?.["BucketEncryption"]).toEqual({ ServerSideEncryptionConfiguration: [{ ServerSideEncryptionByDefault: { SSEAlgorithm: "AES256" } }] });
+    expect(bucket.Properties?.["VersioningConfiguration"]).toBeUndefined();
+    expect(bucket.Properties?.["LifecycleConfiguration"]).toEqual({ Rules: [expect.objectContaining({ ExpirationInDays: 180, Status: "Enabled" })] });
+    expect(bucket.DeletionPolicy).toBe("Retain");
+
+    const [policy] = props("AWS::S3::BucketPolicy");
+    expect(target(policy?.["Bucket"])).toBe(artifactBucket());
+    const statements = (policy?.["PolicyDocument"] as { Statement: Record<string, unknown>[] }).Statement;
+    expect(statements).toContainEqual(
+      expect.objectContaining({ Effect: "Deny", Action: "s3:*", Condition: { Bool: { "aws:SecureTransport": "false" } }, Principal: { AWS: "*" } }),
+    );
+  });
+});
+
+describe("factory stack: build task", () => {
+  it("Scenario: Build task cannot reach the factory's secrets", () => {
+    const taskDefinition = taskDefinitionOf("BuildTaskDefinitionArn");
+    const container = onlyContainer(taskDefinition);
+
+    // The only secret is the API key.
+    const secrets = (container["Secrets"] as { Name: string; ValueFrom: unknown }[] | undefined) ?? [];
+    expect(secrets.map((secret) => secret.Name)).toEqual(["ANTHROPIC_API_KEY"]);
+    expect(JSON.stringify(secrets[0]?.ValueFrom)).toContain(`parameter${PARAMETERS.anthropicApiKey}`);
+    const environment = (container["Environment"] as { Name: string; Value: unknown }[] | undefined) ?? [];
+    expect(Object.fromEntries(environment.map((variable) => [variable.Name, variable.Value]))).toEqual({
+      FACTORY_AUTH_MODE: "api-key",
+      FACTORY_STORE_BUCKET: { Ref: artifactBucket() },
+    });
+
+    // Its task role allows only GetObject and PutObject on work-items/* in the artifact bucket.
+    const [taskRole, executionRole] = buildRoles();
+    expect(taskRole).not.toBe("");
+    expect(workerRoles()).not.toContain(taskRole);
+    expect(workerRoles()).not.toContain(executionRole);
+    expect(statementsOf(taskRole ?? "")).toEqual([{ Action: ["s3:GetObject", "s3:PutObject"], Resource: [bucketObjects()] }]);
+    expect(resources[taskRole ?? ""]?.Properties?.["ManagedPolicyArns"]).toBeUndefined();
+
+    // Its execution role reads the API key parameter, and no other parameter or secret.
+    const reads = statementsOf(executionRole ?? "").filter((statement) => statement.Action.some((action) => /^(ssm|secretsmanager|kms):/.test(action)));
+    const text = JSON.stringify(reads);
+    expect(text).toContain(`parameter${PARAMETERS.anthropicApiKey}`);
+    expect(text).not.toContain(PARAMETERS.githubAppPrivateKey.slice(1));
+    expect(text).not.toContain(PARAMETERS.githubWebhookSecret.slice(1));
+    expect(text).not.toMatch(/secretsmanager:/);
+    expect(text).not.toContain(ofType("AWS::SecretsManager::Secret")[0]?.[0] ?? "no-secret");
+    for (const statement of reads) expect(statement.Resource).not.toContain("*");
+
+    // The ledger admits the worker only: no rule for the build task's security group.
+    const build = outputTarget("BuildSecurityGroupId");
+    expect(resources[build]?.Type).toBe("AWS::EC2::SecurityGroup");
+    expect(build).not.toBe(outputTarget("WorkerSecurityGroupId"));
+    expect(JSON.stringify(ingressOf(ledgerSecurityGroup()))).not.toContain(build);
+  });
+
+  it("has a security group with no ingress and all egress", () => {
+    const build = outputTarget("BuildSecurityGroupId");
+    expect(ingressOf(build)).toEqual([]);
+    expect(resources[build]?.Properties?.["SecurityGroupEgress"]).toEqual([expect.objectContaining({ CidrIp: "0.0.0.0/0", IpProtocol: "-1" })]);
+  });
+
+  it("runs the Dockerfile's build target on Fargate, 2 vCPU, 4 GB and 30 GB of storage, linux/amd64, logging for 14 days", () => {
+    const taskDefinition = taskDefinitionOf("BuildTaskDefinitionArn");
+    expect(taskDefinition).toMatchObject({
+      RequiresCompatibilities: ["FARGATE"],
+      NetworkMode: "awsvpc",
+      Cpu: "2048",
+      Memory: "4096",
+      EphemeralStorage: { SizeInGiB: 30 },
+      RuntimePlatform: { CpuArchitecture: "X86_64", OperatingSystemFamily: "LINUX" },
+    });
+    const container = onlyContainer(taskDefinition);
+    expect(JSON.stringify(container["LogConfiguration"])).toContain("awslogs");
+
+    const assets = dockerAssets();
+    const worker = assets[imageHash(onlyContainer(taskDefinitionOf("WorkerTaskDefinitionArn")))]?.source;
+    const buildImage = assets[imageHash(container)]?.source;
+    expect(omit(buildImage ?? {}, "directory")).toEqual({ ...omit(worker ?? {}, "directory"), dockerBuildTarget: "build" });
+    expect(contextDigest(String(buildImage?.["directory"]))).toEqual(contextDigest(String(worker?.["directory"])));
+  });
+
+  it("cannot be run by the webhook", () => {
+    const [, fn] = only("AWS::Lambda::Function");
+    const webhook = JSON.stringify(policiesOf(target(fn["Role"]) ?? ""));
+    expect(webhook).not.toContain(buildFamily());
+    for (const role of buildRoles()) expect(webhook).not.toContain(role);
+  });
+});
+
+describe("factory stack: build boundary check", () => {
+  it("matches the build task definition in everything but its entry point and command, with the same image", () => {
+    const build = taskDefinitionOf("BuildTaskDefinitionArn");
+    const check = taskDefinitionOf("BuildBoundaryCheckTaskDefinitionArn");
+    expect(outputTarget("BuildBoundaryCheckTaskDefinitionArn")).not.toBe(outputTarget("BuildTaskDefinitionArn"));
+
+    // The same roles (so the same permissions), size, storage, platform and network mode.
+    expect(omit(check, "ContainerDefinitions", "Family")).toEqual(omit(build, "ContainerDefinitions", "Family"));
+    expect(check["TaskRoleArn"]).toEqual(build["TaskRoleArn"]);
+    expect(check["ExecutionRoleArn"]).toEqual(build["ExecutionRoleArn"]);
+
+    // The same container and image; only the entry point differs, so a command override can run Vitest.
+    const checkContainer = onlyContainer(check);
+    const buildContainer = onlyContainer(build);
+    expect(omit(checkContainer, "EntryPoint", "Command")).toEqual(omit(buildContainer, "EntryPoint", "Command"));
+    expect(checkContainer["Image"]).toEqual(buildContainer["Image"]);
+    expect(buildContainer["EntryPoint"]).toBeUndefined();
+    expect(checkContainer["EntryPoint"]).toEqual(["sh", "-c"]);
+    // With no override it refuses to run, and never prints its environment.
+    expect(checkContainer["Command"]).toHaveLength(1);
+    expect(String((checkContainer["Command"] as unknown[])[0])).toMatch(/exit 2/);
+    expect(String((checkContainer["Command"] as unknown[])[0])).not.toMatch(/\benv\b|printenv|\bset\b/);
+  });
+
+  it("is never run by the state machine or the webhook", () => {
+    const family = String(taskDefinitionOf("BuildBoundaryCheckTaskDefinitionArn")["Family"]);
+    const [, machine] = only("AWS::StepFunctions::StateMachine");
+    expect(JSON.stringify(machine["DefinitionString"])).not.toContain(family);
+    const [, fn] = only("AWS::Lambda::Function");
+    expect(JSON.stringify(policiesOf(target(fn["Role"]) ?? ""))).not.toContain(family);
   });
 });

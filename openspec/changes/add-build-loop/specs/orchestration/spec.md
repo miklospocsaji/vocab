@@ -80,7 +80,7 @@ An issue comment whose first line is `/approve`, written by the owner, SHALL sta
 - **THEN** the approval is open again, and the issue has a comment saying the approval did not go through and can be repeated
 
 ### Requirement: Executions carry only pointers
-A role's validated result SHALL be stored in the ledger on its attempt, and a build's outputs SHALL be stored in the artifact store with their keys on the attempt. State inputs and outputs SHALL carry only the issue number, task ids, exit codes and task tokens.
+A role's validated result SHALL be stored in the ledger on its attempt, and a build's outputs SHALL be stored in the artifact store with their keys on the attempt. State inputs and outputs SHALL carry only pointers: the issue number, the change id, task ids, exit codes and task tokens.
 
 #### Scenario: Proposal result is stored in the ledger
 - **WHEN** a proposal attempt succeeds in the worker

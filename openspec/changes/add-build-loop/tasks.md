@@ -56,27 +56,50 @@ Scenarios carried unchanged inside MODIFIED requirements keep their existing tes
 
   Also: `--until design` and `--until plan` stop where they say; a run stops at an open approval and names the `approve` command.
 - [x] 3.12 Write the run loop, `pnpm factory approve`, `--until design|plan|pr` and the Docker build runner.
-- [ ] 3.13 With the owner's approval of each GitHub write, run the factory locally end to end on a small real issue in `app/domain` that the owner writes, up to the PR. Record here: attempts per role, tokens and estimated cost per role and in total, wall time, and anything the roles got wrong. If the typical spend is near the $5 limit, stop and bring the owner options for caps or models before M3.4.
+- [x] 3.13 With the owner's approval of each GitHub write, run the factory locally end to end on a small real issue in `app/domain` that the owner writes, up to the PR. Record here: attempts per role, tokens and estimated cost per role and in total, wall time, and anything the roles got wrong. If the typical spend is near the $5 limit, stop and bring the owner options for caps or models before M3.4.
+
+  **Record (12 November 2026):** issue #7, "Clean up Kindle usage sentences and find the looked-up word in them", a `small` change in `app/domain`, run locally with the subscription token, up to PR #9.
+
+  | Role | Task | Attempts | Tokens (in / out / cache read / cache write) | Estimated cost | Duration |
+  |---|---|---:|---|---:|---:|
+  | proposal-author | | 1 | 99,538 (8 / 3,581 / 69,318 / 26,631) | $0.30 | 33 s |
+  | planner | | 1 | 46,888 (4 / 832 / 22,861 / 23,191) | $0.11 | 8 s |
+  | test-author | 1.1 | 1 | 83,340 (12 / 2,236 / 64,789 / 16,303) | $0.09 | 112 s |
+  | implementer | 1.1 | 1 | 79,518 (12 / 1,779 / 63,074 / 14,653) | $0.08 | 251 s |
+  | test-author | 1.2 | 1 | 81,885 (12 / 2,244 / 70,942 / 8,687) | $0.06 | 76 s |
+  | implementer | 1.2 | 1 | 78,752 (12 / 1,573 / 68,895 / 8,272) | $0.06 | 98 s |
+  | **Total** | | **6** | **469,921** | **$0.70** | |
+
+  - Per role: proposal author $0.30, planner $0.11, test author $0.16, implementer $0.14. No retries, no classifier call, no design (a `small` change).
+  - Wall time: `--until proposal` 40 s; `--until pr` 9 min 12 s (Plan, four builds in the local `build` image, the commits and the PR). Each build's duration includes the container's clone and install.
+  - The typical spend, $0.70 for a two-task change, is far from the $5 limit: no caps or model changes are needed before M3.4.
+  - What went wrong, or nearly:
+    - The change branch was cut from `master` before M3 was merged, so it had no `app/domain` package; the proposal author asked about it as an open question. The owner merged M3 (PR #8) and merged `master` into the change branch before approving. Intake cuts from `master`, so factory work needs the factory's own milestone merged first.
+    - The proposal author and test author wrote the invisible characters (soft hyphen, zero-width characters, byte order mark, U+00A0) literally in the spec and tests, where the issue used `\u` escapes. The tests pass, but the scenarios cannot be read or reviewed by eye, and an editor may strip them.
+    - The proposal's Impact says `app/domain` "may not exist yet", which was true when it ran and stale by the PR.
+    - The proposal author's 4 open questions went unanswered, as nothing reads answers; none blocked the build.
+    - Two factory bugs found before the run, both fixed: the Docker build runner left the store unwritable for the image's user, and `.gitignore` hid the coverage gate's test fixture from CI.
+    - The pushed branch's `origin/<branch>` ref in the local worktree stays stale after `pushBranch` (it pushes to the URL, not to `origin`), so `git status` there shows "ahead 1". Cosmetic; `step` fetches before each build.
 
 ## Step M3.4: The build loop in AWS, and the exit run
 
 ### Worker and state machine
 
-- [ ] 4.1 Failing worker tests for the states `design`, `plan` (task token, `SendTaskSuccess` with ids, `SendTaskFailure` on error), `step` and `open-pr`. Scenarios:
+- [x] 4.1 Failing worker tests for the states `design`, `plan` (task token, `SendTaskSuccess` with ids, `SendTaskFailure` on error), `step` and `open-pr`. Scenarios:
   - Unknown state is refused
   - Failed resume is reported on the issue
   - Owner's approval resumes the execution (now naming the approval)
   - Worker reports an escalation (unchanged, re-run)
-- [ ] 4.2 Write the worker states and the store wiring (`S3Store` from `FACTORY_STORE_BUCKET`).
-- [ ] 4.3 Failing tests on `definition()`: the routes of the diagram in `design.md`, the Map's concurrency 1 and items from `$tasks`, `DesignFlaw` caught into Design, and `WorkItemEscalated` into Escalated. Scenario: Execution history holds no artifacts or secrets (static half: every state's arguments hold only the issue number, task ids, the execution ARN, exit codes and task tokens).
-- [ ] 4.4 Write the state machine.
+- [x] 4.2 Write the worker states and the store wiring (`S3Store` from `FACTORY_STORE_BUCKET`).
+- [x] 4.3 Failing tests on `definition()`: the routes of the diagram in `design.md`, the Map's concurrency 1 and items from `$tasks`, `DesignFlaw` caught into Design, and `WorkItemEscalated` into Escalated. Scenario: Execution history holds no artifacts or secrets (static half: every state's arguments hold only the issue number, the change id, task ids, the execution ARN, exit codes and task tokens).
+- [x] 4.4 Write the state machine.
 
 ### Stack
 
-- [ ] 4.5 Failing CDK assertion tests. Scenario: Build task cannot reach the factory's secrets. Also: the bucket blocks public access, enforces TLS and expires objects after 180 days; the worker role reads and writes the bucket; the state machine may run only the worker and build families and pass only their roles; the build task definition's image is the Dockerfile's `build` target.
-- [ ] 4.6 Write the bucket, the build task definition, its security group and the IAM changes.
-- [ ] 4.7 With the owner: enable Pull requests read and write in the App's settings and accept it on the installation. Amend ADRs 0002, 0003 and 0009.
-- [ ] 4.8 Failing cloud test `factory/worker/test/build-boundaries.cloud.test.ts`, running the build task definition with a probe input. Scenario: Build boundaries hold in Fargate (budget under $0.10). Then confirm with the owner, run `pnpm infra:diff`, `pnpm infra:deploy` and `pnpm test:cloud`, and record the results in `design.md`.
+- [x] 4.5 Failing CDK assertion tests. Scenario: Build task cannot reach the factory's secrets. Also: the bucket blocks public access, enforces TLS and expires objects after 180 days; the worker role reads and writes the bucket; the state machine may run only the worker and build families and pass only their roles; the build task definition's image is the Dockerfile's `build` target.
+- [x] 4.6 Write the bucket, the build task definition, its security group and the IAM changes.
+- [x] 4.7 With the owner: enable Pull requests read and write in the App's settings and accept it on the installation. Amend ADRs 0002, 0003 and 0009.
+- [x] 4.8 Failing cloud test `factory/worker/test/build-boundaries.cloud.test.ts`, running the build task definition with a probe input. Scenario: Build boundaries hold in Fargate (budget under $0.10). Then confirm with the owner, run `pnpm infra:diff`, `pnpm infra:deploy` and `pnpm test:cloud`, and record the results in `design.md`.
 
 ### Exit run
 

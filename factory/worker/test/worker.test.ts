@@ -1,7 +1,7 @@
 /**
- * The worker (add-factory-worker task 1.12, add-cloud-proposal-run task 3.4): `runWorker`
- * with a FakeForge on a temp bare remote, the scripted fake role runner, a fake Step Functions
- * client and the real ledger.
+ * The worker (add-factory-worker task 1.12, add-cloud-proposal-run task 3.4, add-build-loop
+ * task 4.1): `runWorker` with a FakeForge on a temp bare remote, the scripted fake role runner,
+ * a fake Step Functions client, an FsStore with the fake build runner, and the real ledger.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -11,11 +11,15 @@ import { ForgeError } from "@vocab/factory-forge";
 import { FakeForge, type FakeIssue } from "@vocab/factory-forge/testing";
 import { createWorkItem, findOpenApproval, findWorkItemByIssue, LedgerRecorder, listAttempts, type ApprovalRow } from "@vocab/factory-ledger";
 import { createTestDatabase, type TestDatabase } from "@vocab/factory-ledger/testing";
-import { MISSING_REQUIREMENT_COMMENT } from "@vocab/factory-orchestrator";
+import { DESIGN_APPROVAL_INSTRUCTION, MISSING_REQUIREMENT_COMMENT } from "@vocab/factory-orchestrator";
 import { loadRole, type Role } from "@vocab/factory-roles";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { classified, CODE, codeFor, TESTS, testsFor } from "../../orchestrator/test/build-harness.ts";
+import { createFakeBuildRunner, type FakeBuildRunner, type FakeBuildStep } from "../../orchestrator/test/fake-build-runner.ts";
 import { CHANGE_FILES, createFakeRoleRunner, type FakeCall, type FakeStep } from "../../orchestrator/test/fake-role-runner.ts";
-import { runWorker, WORKER_EXIT, type WorkerDeps, type WorkerIdentity } from "../src/worker.ts";
+import { PLAN, planStep, proposalStep, TASKS_MD } from "../../orchestrator/test/work-item-fixture.ts";
+import { FsStore } from "../src/store.ts";
+import { runWorker, WORKER_EXIT, type WorkerDeps, type WorkerIdentity, type WorkerRoles } from "../src/worker.ts";
 import { FakeTaskTokens } from "./fake-task-tokens.ts";
 
 const CHANGE_ID = "add-import-kindle-vocab-db";
@@ -30,6 +34,8 @@ const INVALID: FakeStep = { files: { "proposal.md": CHANGE_FILES.proposal } };
 
 let db: TestDatabase;
 let role: Role;
+let roles: WorkerRoles;
+let store: FsStore;
 let root: string;
 let remote: string;
 let home: string;
@@ -67,6 +73,9 @@ function worker(): Worker {
         forge,
         runRole: fake.runRole,
         role,
+        roles,
+        store,
+        cloneUrl: remote,
         home,
         taskTokens,
         out: (text) => (out += text),
@@ -99,6 +108,13 @@ beforeAll(async () => {
   // Never migrated here: the worker migrates at start-up.
   db = await createTestDatabase("worker");
   role = await loadRole("proposal-author");
+  const [architect, designReviewer, planner, testAuthor, implementer, classifier] = await Promise.all(
+    ["architect", "design-reviewer", "planner", "test-author", "implementer", "failure-classifier"].map((name) => loadRole(name)),
+  );
+  if (architect === undefined || designReviewer === undefined || planner === undefined || testAuthor === undefined || implementer === undefined || classifier === undefined) {
+    throw new Error("a role config is missing");
+  }
+  roles = { architect, designReviewer, planner, testAuthor, implementer, classifier };
   return () => db.close();
 });
 
@@ -110,6 +126,7 @@ beforeEach(() => {
   remote = join(root, "remote.git");
   // The task's temp home; the worker creates it.
   home = join(root, "home");
+  store = new FsStore(join(root, "store"));
 
   git(root, "init", "--bare", "-b", "master", remote);
   const seed = join(root, "seed");
@@ -244,10 +261,15 @@ describe("factory-worker input", () => {
     expect((await w.run(intake())).code).toBe(WORKER_EXIT.ok);
     const attempts = await attemptCount();
 
-    const design = await w.run(["design", "--issue", String(ISSUE.number)], [VALID]);
+    const deploy = await w.run(["deploy", "--issue", String(ISSUE.number)], [VALID]);
 
-    expect(design.code).toBe(WORKER_EXIT.invalid);
-    expect(design.err).toContain("design");
+    expect(deploy.code).toBe(WORKER_EXIT.invalid);
+    expect(deploy.err).toContain("deploy");
+
+    const noTask = await w.run(["step", "--issue", String(ISSUE.number)], [VALID]);
+
+    expect(noTask.code).toBe(WORKER_EXIT.invalid);
+    expect(noTask.err).toContain("--task");
 
     const noWorkItem = await w.run(propose(EMPTY_ISSUE.number), [VALID]);
 
@@ -270,6 +292,9 @@ describe("factory-worker input", () => {
     ["a non-numeric issue", ["intake", "--issue", "twelve"]],
     ["an unknown option", ["intake", "--issue", "12", "--until", "proposal"]],
     ["an extra argument", ["intake", "extra", "--issue", "12"]],
+    ["--task for a state other than step", ["plan", "--issue", "12", "--task", "1.1"]],
+    ["an invalid task id", ["step", "--issue", "12", "--task", "1.1; rm -rf /"]],
+    ["an unknown approval kind", ["await-approval", "--issue", "12", "--kind", "release"]],
   ])("refuses %s with exit 2 and a usage message", async (_label, argv) => {
     const w = worker();
 
@@ -321,14 +346,14 @@ const apiKeyRole = (): Role => ({ ...role, authMode: "api-key" });
 async function approvals(): Promise<ApprovalRow[]> {
   const workItem = await findWorkItemByIssue(db.pool, ISSUE.number);
   if (workItem === undefined) return [];
-  const { rows } = await db.pool.query<{ id: string; state: string; task_token: string; resolved_by: string | null }>(
-    "SELECT id, state, task_token, resolved_by FROM approvals WHERE work_item_id = $1 ORDER BY id",
+  const { rows } = await db.pool.query<{ id: string; kind: string; state: string; task_token: string; resolved_by: string | null }>(
+    "SELECT id, kind, state, task_token, resolved_by FROM approvals WHERE work_item_id = $1 ORDER BY id",
     [workItem.id],
   );
   return rows.map((row) => ({
     id: row.id,
     workItemId: workItem.id,
-    kind: "proposal",
+    kind: row.kind as ApprovalRow["kind"],
     state: row.state as ApprovalRow["state"],
     taskToken: row.task_token,
     requestedAt: new Date(0),
@@ -500,19 +525,22 @@ describe("factory-worker approve and approved", () => {
 
     // approve closes the approval with the owner's login and resumes the execution with its token.
     expect(taskTokens.successes.map((success) => success.taskToken)).toEqual([TOKEN]);
-    expect(await approvals()).toEqual([expect.objectContaining({ state: "closed", taskToken: TOKEN, resolvedBy: OWNER })]);
+    expect(await approvals()).toEqual([expect.objectContaining({ kind: "proposal", state: "closed", taskToken: TOKEN, resolvedBy: OWNER })]);
 
     // The execution goes on to Approved.
     const comments = forge.comments.length;
-    expect((await w.run(approved())).code).toBe(WORKER_EXIT.ok);
+    expect((await w.run(approved())).code).toBe(WORKER_EXIT.skipDesign);
 
     expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("proposal-approved");
     expect(forge.comments).toHaveLength(comments + 1);
     expect(forge.comments.at(-1)?.body).toMatch(/approved/i);
     expect(forge.comments.at(-1)?.body).toContain("proposal-approved");
+    // The confirmation names the approval it closed.
+    expect(forge.comments.at(-1)?.body).toMatch(/\bproposal\b.*\bapproved\b/i);
+    expect(forge.comments.at(-1)?.body).not.toMatch(/\bdesign\b.*\bapproved\b/i);
 
     // A retry of Approved changes nothing and posts nothing.
-    expect((await w.run(approved())).code).toBe(WORKER_EXIT.ok);
+    expect((await w.run(approved())).code).toBe(WORKER_EXIT.skipDesign);
     expect(forge.comments).toHaveLength(comments + 1);
   });
 
@@ -545,21 +573,55 @@ describe("factory-worker approve and approved", () => {
     expect(forge.comments.at(-1)?.body).toMatch(/nothing awaits approval/i);
   });
 
-  it("reopens the approval and says so when SendTaskSuccess fails", async () => {
+  it("Scenario: Failed resume is reported on the issue", async () => {
     const w = worker();
     await awaiting(w);
+    const comments = forge.comments.length;
     taskTokens.failNextSuccess = new Error("ThrottlingException: Rate exceeded");
 
     const { code } = await w.run(approve());
 
     expect(code).toBe(WORKER_EXIT.error);
     expect(await approvals()).toEqual([expect.objectContaining({ state: "open", taskToken: TOKEN, resolvedBy: null })]);
-    expect(forge.comments.at(-1)?.body).toMatch(/`\/approve`/);
+    // One comment: the approval of the proposal did not go through, and can be repeated.
+    expect(forge.comments).toHaveLength(comments + 1);
+    const body = forge.comments.at(-1)?.body ?? "";
+    expect(body).toMatch(/did not go through/i);
+    expect(body).toMatch(/\bproposal\b/);
+    expect(body).toMatch(/`\/approve`/);
+    expect(body).not.toContain("Throttling");
     expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("awaiting-proposal-approval");
 
     // The owner tries again, and it goes through.
     expect((await w.run(approve())).code).toBe(WORKER_EXIT.ok);
     expect(taskTokens.successes.map((success) => success.taskToken)).toEqual([TOKEN]);
+  });
+
+  it("comments on the issue when the approve task fails before it can resume, leaving the approval open", async () => {
+    const w = worker();
+    await awaiting(w);
+    const comments = forge.comments.length;
+    // The ledger fails while closing the approval (M2's exit run: a ledger that did not answer).
+    const pool = db.pool as unknown as { query: (...args: unknown[]) => Promise<unknown> };
+    const query = pool.query.bind(pool);
+    vi.spyOn(pool, "query").mockImplementation(async (...args: unknown[]) => {
+      const text = typeof args[0] === "string" ? args[0] : "";
+      if (/UPDATE approvals SET state = 'closed'/.test(text)) throw new Error("Connection terminated unexpectedly, password=hunter2");
+      return query(...args);
+    });
+
+    const { code } = await w.run(approve());
+    vi.restoreAllMocks();
+
+    expect(code).toBe(WORKER_EXIT.error);
+    expect(taskTokens.successes).toEqual([]);
+    expect(await approvals()).toEqual([expect.objectContaining({ state: "open", taskToken: TOKEN })]);
+    expect(forge.comments).toHaveLength(comments + 1);
+    const body = forge.comments.at(-1)?.body ?? "";
+    expect(forge.comments.at(-1)?.issueNumber).toBe(ISSUE.number);
+    expect(body).toMatch(/did not go through/i);
+    expect(body).toMatch(/`\/approve`/);
+    expect(body).not.toMatch(/hunter2|Connection terminated/);
   });
 
   it("refuses approve without the approver's login, and approved for a work item not awaiting approval", async () => {
@@ -615,5 +677,317 @@ describe("factory-worker escalate", () => {
     expect(code).toBe(WORKER_EXIT.invalid);
     expect((await findWorkItemByIssue(db.pool, ISSUE.number))?.state).toBe("proposal");
     expect(forge.comments).toEqual([]);
+  });
+});
+
+// add-build-loop task 4.1: the states after Proposal.
+
+const DESIGN_TOKEN = "AQB8AAAAKgAAAAMAAAAAAAAAAeDesignToken";
+const PLAN_TOKEN = "AQB8AAAAKgAAAAMAAAAAAAAAAePlanToken";
+
+const DESIGN_MD = ["# Design", "", "## Overview", "", "Read vocab.db with node:sqlite and map each lookup to a word.", ""].join("\n");
+const DESIGN_RESULT = {
+  summary: "Read vocab.db with node:sqlite and map each lookup to a word.",
+  contracts: ["app/contracts/src/lookup.ts"],
+  adrNeeded: [],
+  openQuestions: [],
+};
+const ARCHITECT: FakeStep = { files: { "design.md": DESIGN_MD }, result: DESIGN_RESULT };
+const REVIEW_APPROVE: FakeStep = { result: { verdict: "approve", findings: [] } };
+const REVIEW_CHANGES: FakeStep = {
+  result: { verdict: "changes-requested", findings: [{ severity: "blocker", location: "design.md#Overview", summary: "Duplicate lookups are not merged." }] },
+};
+const BAD_PLAN = planStep(TASKS_MD, { tasks: [{ ...PLAN.tasks[0], scenarios: ["No such scenario"] }, PLAN.tasks[1]] });
+
+const design = (n = ISSUE.number) => ["design", "--issue", String(n)];
+const plan = (n = ISSUE.number) => ["plan", "--issue", String(n)];
+const stepTask = (taskId: string, n = ISSUE.number) => ["step", "--issue", String(n), "--task", taskId];
+const openPr = (n = ISSUE.number) => ["open-pr", "--issue", String(n)];
+const awaitDesignApproval = (n = ISSUE.number) => ["await-approval", "--issue", String(n), "--kind", "design"];
+
+async function stateOf(): Promise<string | undefined> {
+  return (await findWorkItemByIssue(db.pool, ISSUE.number))?.state;
+}
+
+/** Intake, a proposal of the given complexity, the owner's approval and Approved. */
+async function approvedItem(w: Worker, complexity: string): Promise<number> {
+  expect((await w.run(cloudIntake())).code).toBe(WORKER_EXIT.ok);
+  expect((await w.run(propose(), [proposalStep(complexity)])).code).toBe(WORKER_EXIT.ok);
+  expect((await w.run(awaitApproval(), [], { taskToken: TOKEN })).code).toBe(WORKER_EXIT.ok);
+  expect((await w.run(approve())).code).toBe(WORKER_EXIT.ok);
+  const { code } = await w.run(approved());
+  expect(await stateOf()).toBe("proposal-approved");
+  return code;
+}
+
+/** The output Plan resumed the execution with, parsed. */
+function planOutputs(): unknown[] {
+  return taskTokens.successes.filter((success) => success.taskToken === PLAN_TOKEN).map((success) => JSON.parse(success.output) as unknown);
+}
+
+/** A small change through Plan: the work item is in `build` with PLAN's tasks. */
+async function plannedItem(w: Worker): Promise<void> {
+  await approvedItem(w, "small");
+  expect((await w.run(plan(), [planStep()], { taskToken: PLAN_TOKEN })).code).toBe(WORKER_EXIT.ok);
+  expect(await stateOf()).toBe("build");
+}
+
+/** Steps a task, running the build each exit 20 or 21 asks for, until a step exits otherwise; the exit codes in order. */
+async function buildTask(w: Worker, builds: FakeBuildRunner, taskId: string, classifications: FakeStep[] = []): Promise<number[]> {
+  const codes: number[] = [];
+  for (let i = 0; i < 12; i += 1) {
+    const { code, err } = await w.run(stepTask(taskId), classifications);
+    codes.push(code);
+    if (code !== WORKER_EXIT.build && code !== WORKER_EXIT.buildAfterWait) {
+      if (code === WORKER_EXIT.error || code === WORKER_EXIT.invalid) throw new Error(`step exited ${String(code)}: ${err}`);
+      return codes;
+    }
+    await builds.runBuild({ changeId: CHANGE_ID, taskId });
+  }
+  throw new Error(`task ${taskId} took more than 12 steps`);
+}
+
+const fakeBuilds = (steps: FakeBuildStep[]): FakeBuildRunner => createFakeBuildRunner(store, steps);
+const BOOKS_TEST = "app/domain/test/books.test.ts";
+const BOOKS_SOURCE = "app/domain/src/books.ts";
+
+describe("factory-worker approved routes on complexity", { timeout: 60_000 }, () => {
+  it("exits 10 for a small change, which skips Design", async () => {
+    expect(await approvedItem(worker(), "small")).toBe(WORKER_EXIT.skipDesign);
+  });
+
+  it("exits 0 for a medium change, which goes to Design", async () => {
+    expect(await approvedItem(worker(), "medium")).toBe(WORKER_EXIT.ok);
+  });
+});
+
+describe("factory-worker design", { timeout: 60_000 }, () => {
+  it("runs the architect and the design reviewer for a medium change, then exits 0 for Plan", async () => {
+    const w = worker();
+    await approvedItem(w, "medium");
+    const before = git(remote, "rev-parse", `refs/heads/${CHANGE_ID}`);
+
+    const { code } = await w.run(design(), [ARCHITECT, REVIEW_APPROVE]);
+
+    expect(code).toBe(WORKER_EXIT.ok);
+    expect(w.calls.map((call) => call.role).slice(-2)).toEqual(["architect", "design-reviewer"]);
+    expect(await stateOf()).toBe("plan");
+    // The accepted design is pushed, from the task's own clone.
+    const head = git(remote, "rev-parse", `refs/heads/${CHANGE_ID}`);
+    expect(head).not.toBe(before);
+    expect(git(remote, "ls-tree", "-r", "--name-only", head)).toContain(`openspec/changes/${CHANGE_ID}/design.md`);
+    expect(w.calls.at(-1)?.item.worktree.startsWith(`${home}/`)).toBe(true);
+  });
+
+  it("exits 3 when three designs are answered with changes-requested", async () => {
+    const w = worker();
+    await approvedItem(w, "medium");
+
+    const { code } = await w.run(design(), [ARCHITECT, REVIEW_CHANGES, ARCHITECT, REVIEW_CHANGES, ARCHITECT, REVIEW_CHANGES]);
+
+    expect(code).toBe(WORKER_EXIT.escalated);
+    expect(await stateOf()).toBe("escalated");
+  });
+
+  it("exits 11 for a large change, whose design then waits for the owner's approval", async () => {
+    const w = worker();
+    await approvedItem(w, "large");
+
+    const { code } = await w.run(design(), [ARCHITECT]);
+
+    expect(code).toBe(WORKER_EXIT.ownerDesignReview);
+    expect(w.calls.map((call) => call.role)).not.toContain("design-reviewer");
+    expect(await stateOf()).toBe("awaiting-design-approval");
+
+    // AwaitDesignApproval stores a design approval with its token, then posts the design summary.
+    const comments = forge.comments.length;
+    expect((await w.run(awaitDesignApproval(), [], { taskToken: DESIGN_TOKEN })).code).toBe(WORKER_EXIT.ok);
+    expect((await approvals()).at(-1)).toMatchObject({ kind: "design", state: "open", taskToken: DESIGN_TOKEN });
+    expect(forge.comments).toHaveLength(comments + 1);
+    const summary = forge.comments.at(-1)?.body ?? "";
+    expect(summary).toContain(DESIGN_RESULT.summary);
+    expect(summary).toContain(DESIGN_APPROVAL_INSTRUCTION);
+    expect(summary).not.toContain(DESIGN_TOKEN);
+    expect(taskTokens.successes.map((success) => success.taskToken)).not.toContain(DESIGN_TOKEN);
+  });
+
+  it("resumes a design approval on the owner's /approve, and the confirmation names the design", async () => {
+    const w = worker();
+    await approvedItem(w, "large");
+    expect((await w.run(design(), [ARCHITECT])).code).toBe(WORKER_EXIT.ownerDesignReview);
+    expect((await w.run(awaitDesignApproval(), [], { taskToken: DESIGN_TOKEN })).code).toBe(WORKER_EXIT.ok);
+    const comments = forge.comments.length;
+
+    expect((await w.run(approve())).code).toBe(WORKER_EXIT.ok);
+
+    expect(taskTokens.successes.map((success) => success.taskToken)).toEqual([TOKEN, DESIGN_TOKEN]);
+    expect((await approvals()).at(-1)).toMatchObject({ kind: "design", state: "closed", resolvedBy: OWNER });
+    expect(forge.comments).toHaveLength(comments + 1);
+    const body = forge.comments.at(-1)?.body ?? "";
+    expect(body).toContain(CHANGE_ID);
+    expect(body).toMatch(/\bdesign\b.*\bapproved\b/i);
+
+    // The execution goes on to Plan, which accepts the closed design approval.
+    expect((await w.run(plan(), [planStep()], { taskToken: PLAN_TOKEN })).code).toBe(WORKER_EXIT.ok);
+    expect(await stateOf()).toBe("build");
+  });
+
+  it("refuses await-approval --kind design for a work item not awaiting design approval", async () => {
+    const w = worker();
+    await approvedItem(w, "medium");
+
+    const { code } = await w.run(awaitDesignApproval(), [], { taskToken: DESIGN_TOKEN });
+
+    expect(code).toBe(WORKER_EXIT.invalid);
+    expect(taskTokens.failures.map((failure) => failure.taskToken)).toEqual([DESIGN_TOKEN]);
+  });
+});
+
+describe("factory-worker plan", { timeout: 60_000 }, () => {
+  it("stores the plan and resumes the execution with the change id and the unfinished task ids", async () => {
+    const w = worker();
+    await approvedItem(w, "small");
+
+    const { code } = await w.run(plan(), [planStep()], { taskToken: PLAN_TOKEN });
+
+    expect(code).toBe(WORKER_EXIT.ok);
+    expect(await stateOf()).toBe("build");
+    expect(planOutputs()).toEqual([{ exitCode: 0, changeId: CHANGE_ID, tasks: ["1.1", "1.2"] }]);
+    expect(taskTokens.failures).toEqual([]);
+    const head = git(remote, "rev-parse", `refs/heads/${CHANGE_ID}`);
+    expect(git(remote, "ls-tree", "-r", "--name-only", head)).toContain(`openspec/changes/${CHANGE_ID}/tasks.md`);
+  });
+
+  it("resumes the execution with exit code 3 and no tasks when the plan escalates", async () => {
+    const w = worker();
+    await approvedItem(w, "small");
+
+    const { code } = await w.run(plan(), [BAD_PLAN, BAD_PLAN, BAD_PLAN], { taskToken: PLAN_TOKEN });
+
+    expect(code).toBe(WORKER_EXIT.escalated);
+    expect(await stateOf()).toBe("escalated");
+    expect(planOutputs()).toEqual([{ exitCode: 3, changeId: CHANGE_ID, tasks: [] }]);
+    expect(taskTokens.failures).toEqual([]);
+  });
+
+  it("sends SendTaskFailure with a fixed cause on any other error, and exits 1", async () => {
+    const w = worker();
+    await approvedItem(w, "small");
+    vi.spyOn(forge, "pushBranch").mockRejectedValue(new ForgeError("GitHub: pushing failed: 502 Bad Gateway, token ghs_secret", "failed", 502));
+
+    const { code } = await w.run(plan(), [planStep()], { taskToken: PLAN_TOKEN });
+
+    expect(code).toBe(WORKER_EXIT.error);
+    expect(planOutputs()).toEqual([]);
+    expect(taskTokens.failures).toHaveLength(1);
+    const [failure] = taskTokens.failures;
+    expect(failure?.taskToken).toBe(PLAN_TOKEN);
+    expect(`${failure?.error ?? ""} ${failure?.cause ?? ""}`).not.toMatch(/502|ghs_|GitHub/);
+  });
+
+  it("answers a repeated Plan with the same task ids, running no role", async () => {
+    const w = worker();
+    await plannedItem(w);
+    const calls = w.calls.length;
+
+    expect((await w.run(plan(), [], { taskToken: PLAN_TOKEN })).code).toBe(WORKER_EXIT.ok);
+
+    expect(w.calls).toHaveLength(calls);
+    expect(planOutputs()).toEqual([
+      { exitCode: 0, changeId: CHANGE_ID, tasks: ["1.1", "1.2"] },
+      { exitCode: 0, changeId: CHANGE_ID, tasks: ["1.1", "1.2"] },
+    ]);
+  });
+
+  it("refuses to run without a task token", async () => {
+    const w = worker();
+    await approvedItem(w, "small");
+
+    const { code, err } = await w.run(plan());
+
+    expect(code).toBe(WORKER_EXIT.invalid);
+    expect(err).toContain("FACTORY_TASK_TOKEN");
+    expect(await stateOf()).toBe("proposal-approved");
+  });
+});
+
+describe("factory-worker step and open-pr", { timeout: 120_000 }, () => {
+  it("builds every task through step and the build task, then opens the pull request once", async () => {
+    const w = worker();
+    await plannedItem(w);
+    const builds = fakeBuilds([TESTS, CODE, testsFor(BOOKS_TEST, BOOKS_SOURCE, "Books are imported"), codeFor(BOOKS_SOURCE)]);
+
+    // Each task: step writes the test author's input (20), records it and writes the implementer's (20), then ticks it (0).
+    expect(await buildTask(w, builds, "1.1")).toEqual([WORKER_EXIT.build, WORKER_EXIT.build, WORKER_EXIT.ok]);
+    expect(await buildTask(w, builds, "1.2")).toEqual([WORKER_EXIT.build, WORKER_EXIT.build, WORKER_EXIT.ok]);
+
+    // The builds read their inputs from the worker's store, and cloned the remote with no token.
+    expect(builds.calls.map((call) => [call.taskId, call.next.role])).toEqual([
+      ["1.1", "test-author"],
+      ["1.1", "implementer"],
+      ["1.2", "test-author"],
+      ["1.2", "implementer"],
+    ]);
+    for (const call of builds.calls) expect(call.input.cloneUrl).toBe(remote);
+    const head = git(remote, "rev-parse", `refs/heads/${CHANGE_ID}`);
+    expect(git(remote, "show", `${head}:openspec/changes/${CHANGE_ID}/tasks.md`)).toContain("- [x] 1.2");
+
+    // A repeated step of a ticked task does nothing.
+    expect((await w.run(stepTask("1.1"))).code).toBe(WORKER_EXIT.ok);
+    expect(builds.calls).toHaveLength(4);
+
+    const comments = forge.comments.length;
+    expect((await w.run(openPr())).code).toBe(WORKER_EXIT.ok);
+    expect((await w.run(openPr())).code).toBe(WORKER_EXIT.ok);
+
+    expect(await stateOf()).toBe("pr-open");
+    expect(forge.pullRequests).toHaveLength(1);
+    expect(forge.pullRequests[0]).toMatchObject({ head: CHANGE_ID, base: "master" });
+    expect(forge.comments).toHaveLength(comments + 1);
+    expect(forge.comments.at(-1)?.body).toContain(forge.pullRequests[0]?.url ?? "no url");
+  });
+
+  it("exits 21 after a build that left no outcome, so the build runs again after a wait", async () => {
+    const w = worker();
+    await plannedItem(w);
+    const builds = fakeBuilds([{ noOutcome: true }]);
+
+    expect((await w.run(stepTask("1.1"))).code).toBe(WORKER_EXIT.build);
+    await builds.runBuild({ changeId: CHANGE_ID, taskId: "1.1" });
+
+    expect((await w.run(stepTask("1.1"))).code).toBe(WORKER_EXIT.buildAfterWait);
+    expect(await store.exists(`work-items/${CHANGE_ID}/tasks/1.1/next.json`)).toBe(true);
+  });
+
+  it("exits 13 on a design flaw, with the work item back in Design", async () => {
+    const w = worker();
+    await plannedItem(w);
+    const builds = fakeBuilds([TESTS, { ...CODE, outcome: "failed", reason: "green", output: "TypeError: lookups.book is undefined" }]);
+
+    const codes = await buildTask(w, builds, "1.1", [classified("design-flaw", "The design has no book on a lookup.")]);
+
+    expect(codes).toEqual([WORKER_EXIT.build, WORKER_EXIT.build, WORKER_EXIT.designFlaw]);
+    expect(await stateOf()).toBe("design");
+  });
+
+  it("exits 3 when the task escalates", async () => {
+    const w = worker();
+    await plannedItem(w);
+    const builds = fakeBuilds([TESTS, { ...CODE, outcome: "failed", reason: "green", output: "AssertionError: expected 2 to be 1" }]);
+
+    const codes = await buildTask(w, builds, "1.1", [classified("spec-ambiguity", "Should a lookup without a book be imported?")]);
+
+    expect(codes).toEqual([WORKER_EXIT.build, WORKER_EXIT.build, WORKER_EXIT.escalated]);
+    expect(await stateOf()).toBe("escalated");
+  });
+
+  it("refuses a task the plan does not have, and open-pr with unfinished tasks, with exit 2", async () => {
+    const w = worker();
+    await plannedItem(w);
+
+    expect((await w.run(stepTask("9.9"))).code).toBe(WORKER_EXIT.invalid);
+    expect((await w.run(openPr())).code).toBe(WORKER_EXIT.invalid);
+    expect(forge.pullRequests).toEqual([]);
+    expect(await stateOf()).toBe("build");
   });
 });

@@ -7,6 +7,10 @@
  * - compute: an ECS cluster and the `factory-worker` Fargate task definition (ADR 0010), plus a
  *   test-only boundary-check task definition: the same in everything but its image, which is
  *   the worker image plus Vitest. The state machine never runs it.
+ * - builds (add-build-loop, ADR 0011): the artifact bucket the worker and the build task share,
+ *   and the build task definition from the Dockerfile's `build` target, holding only the API key,
+ *   with a task role limited to `work-items/*` in the bucket and a security group the ledger does
+ *   not admit; and a test-only build boundary check, the build task with an `sh -c` entry point
  * - orchestration: the work item's Step Functions state machine (JSONata, from `definition()`),
  *   which runs only the worker task definition, and the webhook Lambda behind a Function URL,
  *   outside the VPC and with no access to the ledger (ADR 0002, amendment of 2026-11-06)
@@ -29,6 +33,7 @@ import {
   Secret as EcsSecret,
 } from "aws-cdk-lib/aws-ecs";
 import { PolicyStatement, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
+import { BlockPublicAccess, Bucket, BucketEncryption } from "aws-cdk-lib/aws-s3";
 import { Architecture, FunctionUrlAuthType, Runtime } from "aws-cdk-lib/aws-lambda";
 import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
 import { LogGroup, RetentionDays } from "aws-cdk-lib/aws-logs";
@@ -52,6 +57,14 @@ export const STATE_MACHINE_NAME = "factory-work-item";
 export const BOUNDARY_CHECK_TARGET = "boundary-check";
 /** The worker's container in the task definition, which RunTask overrides name. */
 export const WORKER_CONTAINER = "worker";
+/** The worker Dockerfile's build container target (ADR 0010, amendment of 2026-11-09). */
+export const BUILD_TARGET = "build";
+/** The build container in its task definition. */
+export const BUILD_CONTAINER = "build";
+/** The store prefix the build task may read and write, and everything the worker exchanges with it. */
+export const WORK_ITEMS_PREFIX = "work-items/";
+/** How long build outputs are kept (design, "Factory stack"). */
+const ARTIFACT_RETENTION_DAYS = 180;
 
 /** The SecureString parameters the owner creates with the AWS CLI; the stack only references them. */
 export const PARAMETERS = {
@@ -98,6 +111,11 @@ export class FactoryStack extends Stack {
   readonly taskDefinition: FargateTaskDefinition;
   /** Test only: the worker's settings and roles with the boundary-check image. */
   readonly boundaryCheckTaskDefinition: FargateTaskDefinition;
+  /** The build container's task definition, which the state machine's Build state runs. */
+  readonly buildTaskDefinition: FargateTaskDefinition;
+  /** Test only: the build task with an `sh -c` entry point, for the live boundary tests (add-build-loop task 4.8). */
+  readonly buildBoundaryCheckTaskDefinition: FargateTaskDefinition;
+  readonly artifactBucket: Bucket;
   readonly ledger: DatabaseCluster;
   readonly stateMachine: StateMachine;
   readonly webhook: NodejsFunction;
@@ -151,6 +169,17 @@ export class FactoryStack extends Stack {
     const ledgerSecret = this.ledger.secret;
     if (ledgerSecret === undefined) throw new Error("the ledger has no generated secret");
 
+    // The artifact store between the worker and the build task (ADR 0003, amendment of add-build-loop).
+    this.artifactBucket = new Bucket(this, "Artifacts", {
+      blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+      enforceSSL: true,
+      encryption: BucketEncryption.S3_MANAGED,
+      versioned: false,
+      lifecycleRules: [{ expiration: Duration.days(ARTIFACT_RETENTION_DAYS) }],
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+    const workItemObjects = this.artifactBucket.arnForObjects(`${WORK_ITEMS_PREFIX}*`);
+
     // Compute: the worker (ADR 0010).
     this.cluster = new Cluster(this, "Cluster", { vpc });
     const logGroup = new LogGroup(this, "WorkerLogs", { retention: RetentionDays.TWO_WEEKS, removalPolicy: RemovalPolicy.DESTROY });
@@ -171,6 +200,16 @@ export class FactoryStack extends Stack {
     this.taskDefinition.addToTaskRolePolicy(
       new PolicyStatement({ actions: ["states:SendTaskFailure", "states:SendTaskSuccess"], resources: [stateMachineArn] }),
     );
+    // The worker reads and writes build inputs and outputs. ListBucket on the prefix, so a missing
+    // key is a 404 rather than a 403: `step` asks whether an outcome exists.
+    this.taskDefinition.addToTaskRolePolicy(new PolicyStatement({ actions: ["s3:GetObject", "s3:PutObject"], resources: [workItemObjects] }));
+    this.taskDefinition.addToTaskRolePolicy(
+      new PolicyStatement({
+        actions: ["s3:ListBucket"],
+        resources: [this.artifactBucket.bucketArn],
+        conditions: { StringLike: { "s3:prefix": [`${WORK_ITEMS_PREFIX}*`] } },
+      }),
+    );
 
     const parameter = (constructId: string, parameterName: string) =>
       StringParameter.fromSecureStringParameterAttributes(this, constructId, { parameterName });
@@ -189,10 +228,12 @@ export class FactoryStack extends Stack {
         }),
       );
 
+    const anthropicApiKey = EcsSecret.fromSsmParameter(parameter("AnthropicApiKey", PARAMETERS.anthropicApiKey));
     const container: Omit<ContainerDefinitionOptions, "image"> = {
       logging: LogDrivers.awsLogs({ logGroup, streamPrefix: "worker" }),
       environment: {
         FACTORY_AUTH_MODE: "api-key",
+        FACTORY_STORE_BUCKET: this.artifactBucket.bucketName,
         FACTORY_GITHUB_REPOSITORY: props.github.repository,
         FACTORY_GITHUB_APP_ID: String(props.github.appId),
         FACTORY_GITHUB_APP_INSTALLATION_ID: String(props.github.installationId),
@@ -200,7 +241,7 @@ export class FactoryStack extends Stack {
       },
       // Secrets only through `secrets`, injected by ECS at start (ADR 0009).
       secrets: {
-        ANTHROPIC_API_KEY: EcsSecret.fromSsmParameter(parameter("AnthropicApiKey", PARAMETERS.anthropicApiKey)),
+        ANTHROPIC_API_KEY: anthropicApiKey,
         FACTORY_GITHUB_APP_PRIVATE_KEY: EcsSecret.fromSsmParameter(parameter("GitHubAppPrivateKey", PARAMETERS.githubAppPrivateKey)),
         FACTORY_LEDGER_SECRET: EcsSecret.fromSecretsManager(ledgerSecret),
       },
@@ -215,8 +256,42 @@ export class FactoryStack extends Stack {
     });
     this.boundaryCheckTaskDefinition.addContainer(WORKER_CONTAINER, { ...container, image: image("BoundaryCheckImage", BOUNDARY_CHECK_TARGET) });
 
-    // Orchestration: the work item's state machine, which runs the worker and nothing else (ADR 0002).
+    // The build container (ADR 0011): only the API key, only work-items/* in the bucket, and a
+    // security group the ledger does not admit. Its own roles, so none of the worker's grants reach it.
+    const buildSecurityGroup = new SecurityGroup(this, "BuildSecurityGroup", {
+      vpc,
+      description: "factory build tasks: no inbound access, and no access to the ledger",
+      allowAllOutbound: true,
+    });
+    const buildSize = { cpu: 2048, memoryLimitMiB: 4096, ephemeralStorageGiB: 30, runtimePlatform: taskSize.runtimePlatform };
+    this.buildTaskDefinition = new FargateTaskDefinition(this, "Build", buildSize);
+    this.buildTaskDefinition.addToTaskRolePolicy(new PolicyStatement({ actions: ["s3:GetObject", "s3:PutObject"], resources: [workItemObjects] }));
+    const buildContainer: ContainerDefinitionOptions = {
+      image: image("BuildImage", BUILD_TARGET),
+      logging: LogDrivers.awsLogs({ logGroup, streamPrefix: "build" }),
+      environment: { FACTORY_AUTH_MODE: "api-key", FACTORY_STORE_BUCKET: this.artifactBucket.bucketName },
+      secrets: { ANTHROPIC_API_KEY: anthropicApiKey },
+    };
+    this.buildTaskDefinition.addContainer(BUILD_CONTAINER, buildContainer);
+
+    // The build boundary check (test only; owner decision, 2026-11-13): the build task in
+    // everything but its entry point, since ECS overrides a command but never an entry point. The
+    // same roles and image, so the same permissions and code. The state machine never runs it.
+    this.buildBoundaryCheckTaskDefinition = new FargateTaskDefinition(this, "BuildBoundaryCheck", {
+      ...buildSize,
+      taskRole: this.buildTaskDefinition.taskRole,
+      executionRole: this.buildTaskDefinition.obtainExecutionRole(),
+    });
+    this.buildBoundaryCheckTaskDefinition.addContainer(BUILD_CONTAINER, {
+      ...buildContainer,
+      entryPoint: ["sh", "-c"],
+      // Without a command override it refuses to run.
+      command: ["echo 'build boundary check: pass the script to run as the command' >&2; exit 2"],
+    });
+
+    // Orchestration: the work item's state machine, which runs the worker and the build task and nothing else (ADR 0002).
     const workerRoleArns = [this.taskDefinition.taskRole.roleArn, this.taskDefinition.obtainExecutionRole().roleArn];
+    const buildRoleArns = [this.buildTaskDefinition.taskRole.roleArn, this.buildTaskDefinition.obtainExecutionRole().roleArn];
     const inCluster = { ArnEquals: { "ecs:cluster": this.cluster.clusterArn } };
     // States and `/approve` run the worker's family, which ECS resolves to its latest revision.
     // An execution keeps the definition it started with, and a deploy that changes the image
@@ -224,14 +299,16 @@ export class FactoryStack extends Stack {
     // (exit run 2, 2026-11-08). The policies allow the family at any revision, and nothing else.
     const workerFamilyArn = this.formatArn({ service: "ecs", resource: "task-definition", resourceName: `${this.taskDefinition.family}:*` });
     const stateMachineRole = new Role(this, "StateMachineRole", { assumedBy: new ServicePrincipal("states.amazonaws.com") });
+    const buildFamilyArn = this.formatArn({ service: "ecs", resource: "task-definition", resourceName: `${this.buildTaskDefinition.family}:*` });
     stateMachineRole.addToPolicy(new PolicyStatement({ actions: ["ecs:RunTask"], resources: [workerFamilyArn], conditions: inCluster }));
+    stateMachineRole.addToPolicy(new PolicyStatement({ actions: ["ecs:RunTask"], resources: [buildFamilyArn], conditions: inCluster }));
     stateMachineRole.addToPolicy(
       new PolicyStatement({
         actions: ["ecs:StopTask", "ecs:DescribeTasks"],
         resources: [this.formatArn({ service: "ecs", resource: "task", resourceName: `${this.cluster.clusterName}/*` })],
       }),
     );
-    stateMachineRole.addToPolicy(new PolicyStatement({ actions: ["iam:PassRole"], resources: workerRoleArns }));
+    stateMachineRole.addToPolicy(new PolicyStatement({ actions: ["iam:PassRole"], resources: [...workerRoleArns, ...buildRoleArns] }));
     stateMachineRole.addToPolicy(
       new PolicyStatement({
         actions: ["events:PutTargets", "events:PutRule", "events:DescribeRule"],
@@ -244,6 +321,7 @@ export class FactoryStack extends Stack {
       subnets: vpc.publicSubnets.map((subnet) => subnet.subnetId),
       securityGroup: workerSecurityGroup.securityGroupId,
       container: WORKER_CONTAINER,
+      build: { taskDefinition: this.buildTaskDefinition.family, securityGroup: buildSecurityGroup.securityGroupId, container: BUILD_CONTAINER },
     };
     this.stateMachine = new StateMachine(this, "StateMachine", {
       stateMachineName: STATE_MACHINE_NAME,
@@ -315,6 +393,11 @@ export class FactoryStack extends Stack {
     new CfnOutput(this, "WorkerTaskDefinitionArn", { value: this.taskDefinition.taskDefinitionArn });
     new CfnOutput(this, "BoundaryCheckTaskDefinitionArn", { value: this.boundaryCheckTaskDefinition.taskDefinitionArn });
     new CfnOutput(this, "WorkerContainerName", { value: WORKER_CONTAINER });
+    new CfnOutput(this, "BuildTaskDefinitionArn", { value: this.buildTaskDefinition.taskDefinitionArn });
+    new CfnOutput(this, "BuildBoundaryCheckTaskDefinitionArn", { value: this.buildBoundaryCheckTaskDefinition.taskDefinitionArn });
+    new CfnOutput(this, "BuildContainerName", { value: BUILD_CONTAINER });
+    new CfnOutput(this, "BuildSecurityGroupId", { value: buildSecurityGroup.securityGroupId });
+    new CfnOutput(this, "ArtifactBucketName", { value: this.artifactBucket.bucketName });
     new CfnOutput(this, "WorkerSubnetIds", { value: Fn.join(",", vpc.publicSubnets.map((subnet) => subnet.subnetId)) });
     new CfnOutput(this, "WorkerSecurityGroupId", { value: workerSecurityGroup.securityGroupId });
     new CfnOutput(this, "WorkerLogGroupName", { value: logGroup.logGroupName });

@@ -124,9 +124,9 @@ describe("parseWorkerArgs", () => {
   });
 
   it("names an unknown state", () => {
-    const parsed = parseWorkerArgs(["design", "--issue", "1"]);
+    const parsed = parseWorkerArgs(["deploy", "--issue", "1"]);
     expect(parsed.ok).toBe(false);
-    if (!parsed.ok) expect(parsed.message).toMatch(/unknown state design/);
+    if (!parsed.ok) expect(parsed.message).toMatch(/unknown state deploy/);
   });
 
   it.each([[[]], [["intake"]], [["intake", "--issue", "0"]], [["intake", "--issue", "1.5"]], [["intake", "--issue"]], [["intake", "--issue", "1", "--x"]]])(

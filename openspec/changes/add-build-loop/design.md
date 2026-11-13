@@ -2,14 +2,14 @@
 
 ## Overview
 
-Every state is still a Fargate task. The worker runs the roles without Bash, the classifier and every ledger, git and GitHub step. The build task (`add-build-roles`) runs the test author and implementer and their gates. They exchange files through the artifact store, and the execution carries only issue numbers, task ids, exit codes and task tokens.
+Every state is still a Fargate task. The worker runs the roles without Bash, the classifier and every ledger, git and GitHub step. The build task (`add-build-roles`) runs the test author and implementer and their gates. They exchange files through the artifact store, and the execution carries only pointers: the issue number, the change id, task ids, exit codes and task tokens. The change id names the work item's branch and store prefix and holds no artifact, so it is a pointer like the issue number; the worker checks it against the issue's work item.
 
 ```
 … AwaitApproval ─▶ Approved ─┬─ 10 (small) ─────────────────────────────────┐
                              └─ 0 ─▶ Design ─┬─ 0 (medium: reviewer passed) ─┤
                                     ▲        └─ 11 (large) ─▶ AwaitDesignApproval ─┤
                                     │                                       ▼
-                                    │                     Plan (waitForTaskToken → { exitCode, tasks })
+                                    │                     Plan (waitForTaskToken → { exitCode, changeId, tasks })
                                     │                                       ▼
                                     │       BuildTasks: Map over tasks, concurrency 1
                                     │       ┌──────────────────────────────────────────────┐
@@ -46,7 +46,7 @@ Plan returns through a task token, not an exit code (below).
 - **`approved`** (changed): sets `proposal-approved`, comments, then reads `x-complexity` from `.openspec.yaml` (zod; unknown escalates). It exits 10 for `small` and 0 otherwise.
 - **`design`** (new): runs the architect, then for `medium` the design reviewer, in the same task to save a start-up, looping up to 3 architect attempts. Each accepted design is committed and pushed. It exits 0 (go to Plan), 11 (`large`: owner review) or 3. On a return for a design flaw, it puts the flaw's evidence in the architect's prompt and counts the flaw; the third flaw escalates.
 - **`await-approval --kind proposal|design`** (generalised): the approval row gets a `kind`. The design summary lists the design's summary, its contracts, the ADRs it needs, and its cost.
-- **`plan`** (new, a `waitForTaskToken` state): runs the planner and `validatePlan`, stores the tasks, commits and pushes `tasks.md`. It then calls `SendTaskSuccess` with `{ exitCode: 0, tasks: [<unfinished ids>] }`, or `{ exitCode: 3, tasks: [] }` when it escalated. Any other error is a `SendTaskFailure`, as in AwaitApproval.
+- **`plan`** (new, a `waitForTaskToken` state): runs the planner and `validatePlan`, stores the tasks, commits and pushes `tasks.md`. It then calls `SendTaskSuccess` with `{ exitCode: 0, changeId, tasks: [<unfinished ids>] }`, or `{ exitCode: 3, changeId, tasks: [] }` when it escalated. Any other error is a `SendTaskFailure`, as in AwaitApproval.
 - **`step --task <id>`** (new): the task's state machine, rebuilt from the ledger every time, so a repeated or retried `step` is safe:
 
   | Ledger shows | Step does | Exits |
@@ -82,12 +82,12 @@ The `Build` state runs the build task definition with the command `["build", "--
 ### State machine (`factory/orchestrator/src/state-machine.ts`)
 
 - New worker states use the existing `workerState` helper, so they get the same crash retries and Escalate path.
-- `Plan` is an `ecs:runTask.waitForTaskToken` state with a heartbeat-free timeout of 2 hours. Its output is `{ tasks }`, kept as a variable.
+- `Plan` is an `ecs:runTask.waitForTaskToken` state with a heartbeat-free timeout of 2 hours. Its output is `{ changeId, tasks }`, kept as the variables `$changeId` and `$tasks`.
 - **`BuildTasks`:** an inline Map, `Items: {% $tasks %}`, `MaxConcurrency: 1`, whose processor is `Step` → `StepExit` → `Build` / `WaitInfra` → `Step`.
   - A `Build` task that crashes is retried twice, as worker states are, then goes to `Step`, which records `no-outcome`.
   - `Fail` states inside the processor carry the errors `DesignFlaw` and `WorkItemEscalated`.
 - The Map catches `DesignFlaw` into `Design`, and `WorkItemEscalated` into `Escalated`. It succeeds into `OpenPullRequest`.
-- Task ids are the only per-item input. `Step` and `Build` get `--task` from `$states.input`.
+- Task ids are the only per-item input. The processor's first state assigns the item to `$taskId`, and `Step` and `Build` take `--task` from it; `Build` takes `--change` from `$changeId`. Retries inside the Map count in `$itemTries`, since a Map's states may not assign a variable of the outer scope. A crashed or refusing `Step` ends the item with `WorkerFailed` or `WorkerRefused`, which the Map catches into `Escalate` with that reason.
 
 ### Ledger (`0003_build.sql`)
 
@@ -123,14 +123,25 @@ The loop calls the same handlers as the worker, with `step` in a loop per task.
   - image: the `build` target of the same `DockerImageAsset` Dockerfile
   - size: 2 vCPU / 4 GB, since tests and typecheck run in it
   - storage: 30 GB ephemeral
-  - environment: `FACTORY_AUTH_MODE=api-key` and `FACTORY_STORE_BUCKET`
+  - environment: `FACTORY_AUTH_MODE=api-key` and `FACTORY_STORE_BUCKET` (the worker reads the same variable)
   - secrets: only `ANTHROPIC_API_KEY`
   - logs: 14 days
 - **Build task role:** `s3:GetObject` and `s3:PutObject` on `<bucket>/work-items/*`, nothing else. Its execution role reads only the API key parameter.
 - **Build security group:** no ingress, all egress. It is not added to Aurora's ingress.
-- **Worker task role:** gains read and write on the bucket.
+- **Worker task role:** gains `s3:GetObject` and `s3:PutObject` on `<bucket>/work-items/*`, and `s3:ListBucket` on the bucket for the `work-items/` prefix, so that a missing key is a 404 rather than a 403 (`step` asks whether an outcome exists).
 - **State machine role:** gains running the build family and passing the build roles.
+- **Build boundary check task definition (test only):** the build task definition with the same roles, image, secret, environment, size and storage, but with entry point `sh -c` and a default command that exits 2. ECS overrides a container's command but never its entry point, so the cloud test needs this sibling to run Vitest in the build image (owner decision, 2026-11-13, after ADR 0010's boundary check). Neither the state machine nor the webhook may run it.
 - **Webhook Lambda:** unchanged.
+
+### Cloud results (task 4.8, 2026-11-13)
+
+- **Diff:** run and reviewed by the owner. **Deploy:** `pnpm infra:deploy` succeeded in 202 s, with no execution running. It created the artifact bucket, the `FactoryBuild` and `FactoryBuildBoundaryCheck` task definitions (revision 1) and the build security group. It moved the worker to revision 7 and updated the state machine.
+- **`pnpm test:cloud`:** 3 files, 5 tests passed.
+  - The boundary check matches the deployed build task definition in everything but family, entry point and command, and runs the same image.
+  - The real build task refused a decoy `FACTORY_LEDGER_SECRET` with exit 2, named it and never printed its value.
+  - In the check task, "Non-allowlisted command is denied" and "Build container holds only the model credential" passed, with no credential or decoy value in the log. The test asserts spend under the $0.10 cap; the first run's log reported $0.0014.
+  - M2's role boundary test and the webhook test still pass.
+- **First run:** the credential scenario failed, because the cloud test had not given the check task the decoy `CLAUDE_CODE_OAUTH_TOKEN`, `FACTORY_GITHUB_TOKEN` and `AWS_SECRET_ACCESS_KEY` the scenario needs. ECS sets `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` itself. The owner approved adding them to the test, and the re-run passed.
 
 ## Decisions
 

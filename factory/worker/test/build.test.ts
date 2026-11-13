@@ -1,5 +1,6 @@
 // `factory-build <role> --input <key> [--patch <key>]` (add-build-roles task 2.10; gates-only in
-// add-build-loop task 3.11), with a fake role runner,
+// add-build-loop task 3.11) and `factory-build build --change <id> --task <id>`, as the cloud's
+// Build state runs it (add-build-loop task 4.1), with a fake role runner,
 // fake gates and install, a temp git remote and an FsStore.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -416,6 +417,69 @@ describe("factory-build", () => {
     expect(result.code).toBe(BUILD_EXIT.invalid);
     expect(result.err.join("")).toContain("proposal-author");
     expect(existsSync(join(home, "work"))).toBe(false);
+  });
+
+  describe("build --change --task, from the task's next.json", () => {
+    const NEXT = `work-items/${CHANGE_ID}/tasks/1.1/next.json`;
+
+    it("runs the session that next.json names, and writes its outcome next to the input", async () => {
+      await store.put(INPUT_KEY("implementer"), JSON.stringify(input()));
+      await store.put(NEXT, JSON.stringify({ role: "implementer", mode: "session", input: INPUT_KEY("implementer") }));
+      const f = fake({
+        act: (worktree) => {
+          write(worktree, SOURCE, "export const words = 3;\n");
+        },
+      });
+
+      const code = await runBuild(["build", "--change", CHANGE_ID, "--task", "1.1"], f.deps);
+
+      expect(f.err.join("")).toBe("");
+      expect(code).toBe(BUILD_EXIT.ok);
+      expect(f.sessions.map((session) => session.role.name)).toEqual(["implementer"]);
+      expect(f.reads[0]).toBe(NEXT);
+      expect(await outcome("implementer")).toMatchObject({ role: "implementer", outcome: "passed" });
+    });
+
+    it("runs only the gates for a gates-only next.json, on its patch", async () => {
+      await build("implementer", {
+        act: (worktree) => {
+          write(worktree, SOURCE, "export const words = 4;\n");
+        },
+      });
+      const patchKey = (await outcome("implementer")).patch;
+      const rerun = `work-items/${CHANGE_ID}/tasks/1.1/implementer/2`;
+      await store.put(`${rerun}/input.json`, JSON.stringify(input()));
+      await store.put(NEXT, JSON.stringify({ role: "implementer", mode: "gates-only", input: `${rerun}/input.json`, patch: patchKey }));
+      const f = fake();
+      const rerunHome = join(dirname(work), "rerun-home");
+      mkdirSync(rerunHome);
+
+      const code = await runBuild(["build", "--change", CHANGE_ID, "--task", "1.1"], { ...f.deps, home: rerunHome });
+
+      expect(f.err.join("")).toBe("");
+      expect(code).toBe(BUILD_EXIT.ok);
+      expect(f.sessions).toEqual([]);
+      expect(f.gates).toHaveLength(1);
+      expect(BuildOutcome.parse(JSON.parse(await store.get(`${rerun}/outcome.json`)))).toMatchObject({ role: "implementer", outcome: "passed" });
+    });
+
+    it.each([
+      ["no --task", ["build", "--change", CHANGE_ID]],
+      ["no --change", ["build", "--task", "1.1"]],
+      ["--input with --change", ["build", "--change", CHANGE_ID, "--task", "1.1", "--input", INPUT_KEY("implementer")]],
+      ["a change id that is not one", ["build", "--change", "../etc", "--task", "1.1"]],
+      ["a task id that is not one", ["build", "--change", CHANGE_ID, "--task", "1.1/../x"]],
+      ["a task with no next.json", ["build", "--change", CHANGE_ID, "--task", "2.1"]],
+    ])("refuses %s with exit 2 and no outcome", async (_label, argv) => {
+      await store.put(INPUT_KEY("implementer"), JSON.stringify(input()));
+      await store.put(NEXT, JSON.stringify({ role: "implementer", mode: "session", input: INPUT_KEY("implementer") }));
+      const f = fake();
+
+      expect(await runBuild(argv, f.deps)).toBe(BUILD_EXIT.invalid);
+      expect(f.err.join("")).not.toBe("");
+      expect(f.runners).toEqual([]);
+      expect(await store.exists(`${PREFIX("implementer")}/outcome.json`)).toBe(false);
+    });
   });
 
   describe("bad input exits 2 with no outcome", () => {
