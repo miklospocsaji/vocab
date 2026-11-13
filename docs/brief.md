@@ -377,9 +377,16 @@ Ten milestones, each ending in a working end-to-end path; app features enter as 
    - Order: after M3 ships (add-build-loop tasks 4.10 to 4.12, with the M3 changes archived), with the old work-item branches closed or noted, and before M3.5, which is then built in the factory's own repository. One target only; features for several projects wait for a second project.
    - To settle in a fresh session: which ADRs go where, the shape of the target config, where the build toolchain comes from, and whether `CLAUDE.md` and the CI split as described.
    - Exit (draft): the factory, deployed from its own repository, takes one small `vocab` issue to a PR, and `vocab`'s CI runs only the app's gates.
-6. **M3.5 Owner comments (draft, to be settled)**
+6. **M3.5 Owner comments and resuming work items (draft, to be settled)**
    - Why: in M3 the factory ignores every issue comment except `/approve`, and its roles read only the issue's title and body. The owner's answers to a proposal's open questions, and any other feedback, reach the factory only by editing the issue body. That edit reaches Design and Plan, never the proposal already written.
-   - Scope: the factory reads the owner's issue comments and acts on them. Comments are untrusted input, like the issue body, and only the owner's count.
+   - Why, too: a work item whose execution was stopped or failed cannot be resumed. The ledger ties the work item to its execution, so relabelling the issue starts an execution whose Intake answers `duplicate` and ends. The only way on is a new issue that repeats Intake, Proposal, the approval, Design and Plan. This happened in M3's exit run: the owner stopped #11's execution over a build-task bug, and after the fix the work went on as a new issue.
+   - Scope: the factory reads the owner's issue comments and acts on them. Comments are untrusted input, like the issue body, and only the owner's count. The owner can resume a work item whose execution has ended, from the state it reached.
+   - To settle for resuming:
+     - the trigger: a command such as `/resume`, a relabel, or both
+     - how Intake adopts the work item: it checks that the old execution is no longer running, which needs `states:DescribeExecution`
+     - how the later states skip what is done; each must be idempotent on a work item already past it, including the approval waits, which must not ask for a second `/approve`
+     - what happens to open attempts and the attempt counts: does a stop count toward the infra limit?
+     - whether the owner may resume an escalated work item, and with which evidence
    - To settle: go through what a comment means in each state machine state, and what the factory does with it there. For example:
      - while a proposal or a design awaits approval: answers to open questions, or a request to revise before approving
      - while a worker or build task runs: queued, ignored, or a reason to stop
