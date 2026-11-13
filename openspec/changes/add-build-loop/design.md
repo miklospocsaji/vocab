@@ -143,6 +143,29 @@ The loop calls the same handlers as the worker, with `step` in a loop per task.
   - M2's role boundary test and the webhook test still pass.
 - **First run:** the credential scenario failed, because the cloud test had not given the check task the decoy `CLAUDE_CODE_OAUTH_TOKEN`, `FACTORY_GITHUB_TOKEN` and `AWS_SECRET_ACCESS_KEY` the scenario needs. ECS sets `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` itself. The owner approved adding them to the test, and the re-run passed.
 
+### Exit-run findings (task 4.10, 2026-11-13)
+
+The first build of issue #11 (task 1.1, test author) failed three times with `git diff --binary … fatal: Out of memory, malloc failed (tried to allocate 18446744072335493458 bytes)`, and nothing but `input.json` reached the store. The owner stopped the execution. Diagnosed in the build boundary check task, with no deploy:
+- **The chain:**
+  1. The model ran `pnpm lint`, which is `eslint .` with typed linting over the whole repository, factory and infra included.
+  2. In the 4 GB build task, Node's heap ran out (`Ineffective mark-compacts near heap limit`), and ESLint aborted (SIGABRT, exit 134).
+  3. Fargate allows core dumps (`ulimit -c unlimited`, `core_pattern=core`), so each abort wrote a `core.<pid>` of about 2.9 GB into the clone.
+  4. The diff check failed on the cores, which are outside the role's paths, so the gates never ran. `diffPatch` then added the cores with `--intent-to-add`, and `git diff --binary` overflowed on them.
+- **Measured locally:**
+  - `eslint .` needs more than a 3 GB heap: it fails at 2 and 3 GB, and passes at 4.2 GB with 4.1 GB RSS.
+  - `eslint app/` passes with 0.5 GB in 3 s.
+  - The tests, the gates' unit run and `node:sqlite` ran normally in Fargate.
+- **Fixes** (4.10a, 4.10b):
+  - **The gates and the build roles typecheck and lint only the app** (`typecheck:app`, `lint:app`). This is the real fix, and the direction of M3.25. The owner's `pnpm check` and CI still check everything.
+  - **The build task gets 8 GB, `NODE_OPTIONS=--max-old-space-size=4096` and a core ulimit of 0.** The heap setting reaches `factory-build` itself. It does not reach the gates or the model's Bash commands, which run with fixed environments that remove `NODE_OPTIONS`, since it can inject code.
+  - **No role may leave a file over 10 MB.** The diff check names it, and the patch leaves it out.
+  - **A patch that cannot be made still leaves evidence:** the messages, an empty patch and a failed outcome with reason `error`. Step records it as a test-author or implementer failure like any other.
+- **Cost of the diagnosis:**
+  - two test-author sessions in api-key mode, about $1 at most; the Anthropic console has the exact figure
+  - a few cents of Fargate
+  - the three failed cloud attempts of #11 before the stop
+- **A mistake during the diagnosis:** the core watcher matched files by name. It also deleted package files named `core.*` inside that one throwaway container, which spoiled that run's typecheck. The core evidence came from ELF notes and the session's own log, and is not affected.
+
 ## Decisions
 
 - **One `step` state per move, rebuilt from the ledger.** A retried or duplicated task re-derives what to do. The alternative, one state per role and outcome, would double the states and the start-ups.

@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc -p .",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "typecheck:app": "tsc -p tsconfig.app.json",
+    "lint:app": "eslint app/"
   }
 }

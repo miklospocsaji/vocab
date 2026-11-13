@@ -2,7 +2,7 @@
 // temp git repo as Bash or agent-run code would, and the diff check against the starting commit
 // catches every write outside the role's globs.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, truncateSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { HookJSONOutput, Options } from "@anthropic-ai/claude-agent-sdk";
@@ -36,6 +36,12 @@ function git(...args: string[]): string {
 function write(path: string, content: string): void {
   mkdirSync(dirname(join(repo, path)), { recursive: true });
   writeFileSync(join(repo, path), content);
+}
+
+/** A sparse file just over the 10 MB limit, such as the core dump an aborted process leaves. */
+function oversized(path: string): void {
+  write(path, "");
+  truncateSync(join(repo, path), 10 * 1024 * 1024 + 1);
 }
 
 function read(path: string): string {
@@ -162,6 +168,20 @@ describe("the diff check of a build role's session", () => {
     });
 
     expect(await diffCheck(repo, base, writableFor(implementer, CHANGE_ID))).toEqual({ passed: true, outside: [] });
+  });
+
+  it("Scenario: Oversized file fails the diff check", async () => {
+    await session(testAuthor, () => {
+      write("app/domain/test/lemma.test.ts", 'it("Scenario: Lemmas are found", () => { expect(1).toBe(2); });\n');
+      oversized("app/domain/test/huge.bin");
+      oversized("core.812");
+    });
+
+    expect(await diffCheck(repo, base, writableFor(testAuthor, CHANGE_ID))).toEqual({ passed: false, outside: ["app/domain/test/huge.bin", "core.812"] });
+    const patch = await diffPatch(repo, base);
+    expect(patch).toContain("app/domain/test/lemma.test.ts");
+    expect(patch).not.toContain("huge.bin");
+    expect(patch).not.toContain("core.812");
   });
 
   it("Scenario: Test author cannot change existing code", async () => {

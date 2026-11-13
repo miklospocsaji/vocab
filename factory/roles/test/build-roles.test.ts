@@ -13,9 +13,10 @@ const REPO_ROOT = resolve(import.meta.dirname, "../../..");
 
 const READ_ONLY = ["Read", "Grep", "Glob"];
 const EDITING = [...READ_ONLY, "Edit", "Write"];
+// The app's typecheck and lint only (add-build-loop, "Build roles check only the app").
 const BASH_ALLOWLIST = [
-  "Bash(pnpm typecheck)",
-  "Bash(pnpm lint)",
+  "Bash(pnpm typecheck:app)",
+  "Bash(pnpm lint:app)",
   "Bash(pnpm exec vitest run:*)",
   "Bash(git status:*)",
   "Bash(git diff:*)",
@@ -121,7 +122,19 @@ describe("the M3 session roles", () => {
 
   it("the implementer's prompt names the checks to run before returning", async () => {
     const { prompt } = await loadRole("implementer");
-    for (const command of ["pnpm exec vitest run", "pnpm typecheck", "pnpm lint"]) expect(prompt).toContain(command);
+    for (const command of ["pnpm exec vitest run", "pnpm typecheck:app", "pnpm lint:app"]) expect(prompt).toContain(command);
+  });
+
+  it("Scenario: Build roles check only the app", async () => {
+    for (const name of ["test-author", "implementer"]) {
+      const role = await loadRole(name);
+      expect(role.allow).toContain("Bash(pnpm typecheck:app)");
+      expect(role.allow).toContain("Bash(pnpm lint:app)");
+      expect(role.allow).not.toContain("Bash(pnpm typecheck)");
+      expect(role.allow).not.toContain("Bash(pnpm lint)");
+      // The prompt names only the app's commands: a whole-repository lint does not fit the build task.
+      expect(role.prompt).not.toMatch(/`pnpm (typecheck|lint)`/);
+    }
   });
 });
 

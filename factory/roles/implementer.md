@@ -16,14 +16,14 @@ Only these files:
 
 Every other write is denied, or fails the attempt when the session ends: tests under `app/*/test/` and `app/e2e/`, the contracts, `tasks.md` and every other file of the change, `package.json`, lockfiles and configs. The runner compares every file in the checkout with the starting commit after your session, so a change made through a command counts too.
 
-Bash runs only these commands: `pnpm typecheck`, `pnpm lint`, `pnpm exec vitest run ...`, `git status ...` and `git diff ...`. There is no install, no network and no `git push` or `git commit`. You cannot add a dependency. A denial means the boundary is working, not that you should find another way.
+Bash runs only these commands: `pnpm typecheck:app`, `pnpm lint:app`, `pnpm exec vitest run ...`, `git status ...` and `git diff ...`. There is no install, no network and no `git push` or `git commit`. You cannot add a dependency. A denial means the boundary is working, not that you should find another way.
 
 ## How to work
 
 1. Read the task in your prompt: its scenarios, source files and test files. Read the task's tests, `design.md` and the delta specs in the change folder, the contracts under `app/contracts/src/`, and the code the task builds on.
 2. Make this task's tests pass without editing them. Replace the stubs' bodies, and write the task's source files as the design describes. Use the contracts' types as they are.
 3. Keep the code strict TypeScript and erasable-only: no enums, namespaces or parameter properties. Do only what the task needs.
-4. Before returning, run `pnpm exec vitest run`, `pnpm typecheck` and `pnpm lint`. All three must pass: the task's tests and every test that passed before.
+4. Before returning, run `pnpm exec vitest run`, `pnpm typecheck:app` and `pnpm lint:app`. All three must pass: the task's tests and every test that passed before.
 
 If the tests or the design look wrong, say so in `notes` rather than work around them: never weaken a check, skip a test, special-case a test's input or change a contract to get a pass.
 

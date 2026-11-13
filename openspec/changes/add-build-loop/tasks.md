@@ -110,5 +110,13 @@ Scenarios carried unchanged inside MODIFIED requirements keep their existing tes
   - CI green on the PR
   - attempts, cost per role and in total, and wall time
   - Scenario: Execution history holds no artifacts or secrets (the scan of M2's task 4.1, extended to patches, gate output and the design)
+- [x] 4.10a Exit-run fixes (found in 4.10: ESLint ran out of heap in the 4 GB build task, the abort left 2.9 GB core dumps in the clone, and `git diff --binary` crashed on them, so no evidence was saved). Failing tests first:
+  - Scenario: Gates check only the app's code
+  - Scenario: Build roles check only the app
+  - Scenario: Oversized file fails the diff check
+  - Scenario: Failed patch still records the attempt
+  - Scenario: Build task has room for its checks and writes no core dumps
+- [x] 4.10b Write the fixes: `typecheck:app` and `lint:app` scripts used by the gates and the build roles, the 10 MB limit in the diff check and the patch, the patch fallback in `factory-build`, and the build task's 8 GB, heap and core ulimit. Record the findings in `design.md`.
+- [ ] 4.10c Confirm with the owner, run `pnpm infra:diff`, `pnpm infra:deploy` and `pnpm test:cloud`, then restart the work item of 4.10 and continue 4.10.
 - [ ] 4.11 If the importer was not `medium`, repeat with a second issue the owner writes, which is `medium`, up to its PR. Record that it passed agent design review.
 - [ ] 4.12 Run `pnpm gates coverage --tests factory` for `add-build-gates`, `add-build-roles` and `add-build-loop`. Update `CLAUDE.md` with the build task, `pnpm factory approve`, `--until pr`, the artifact bucket and how to follow a build in the logs. Archive `add-build-gates`, then `add-build-roles`, then `add-build-loop`.

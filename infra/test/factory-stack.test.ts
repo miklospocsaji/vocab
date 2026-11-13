@@ -652,6 +652,7 @@ describe("factory stack: build task", () => {
     expect(Object.fromEntries(environment.map((variable) => [variable.Name, variable.Value]))).toEqual({
       FACTORY_AUTH_MODE: "api-key",
       FACTORY_STORE_BUCKET: { Ref: artifactBucket() },
+      NODE_OPTIONS: "--max-old-space-size=4096",
     });
 
     // Its task role allows only GetObject and PutObject on work-items/* in the artifact bucket.
@@ -685,13 +686,13 @@ describe("factory stack: build task", () => {
     expect(resources[build]?.Properties?.["SecurityGroupEgress"]).toEqual([expect.objectContaining({ CidrIp: "0.0.0.0/0", IpProtocol: "-1" })]);
   });
 
-  it("runs the Dockerfile's build target on Fargate, 2 vCPU, 4 GB and 30 GB of storage, linux/amd64, logging for 14 days", () => {
+  it("runs the Dockerfile's build target on Fargate, 2 vCPU, 8 GB and 30 GB of storage, linux/amd64, logging for 14 days", () => {
     const taskDefinition = taskDefinitionOf("BuildTaskDefinitionArn");
     expect(taskDefinition).toMatchObject({
       RequiresCompatibilities: ["FARGATE"],
       NetworkMode: "awsvpc",
       Cpu: "2048",
-      Memory: "4096",
+      Memory: "8192",
       EphemeralStorage: { SizeInGiB: 30 },
       RuntimePlatform: { CpuArchitecture: "X86_64", OperatingSystemFamily: "LINUX" },
     });
@@ -703,6 +704,15 @@ describe("factory stack: build task", () => {
     const buildImage = assets[imageHash(container)]?.source;
     expect(omit(buildImage ?? {}, "directory")).toEqual({ ...omit(worker ?? {}, "directory"), dockerBuildTarget: "build" });
     expect(contextDigest(String(buildImage?.["directory"]))).toEqual(contextDigest(String(worker?.["directory"])));
+  });
+
+  it("Scenario: Build task has room for its checks and writes no core dumps", () => {
+    const taskDefinition = taskDefinitionOf("BuildTaskDefinitionArn");
+    expect(taskDefinition["Memory"]).toBe("8192");
+    const container = onlyContainer(taskDefinition);
+    const environment = (container["Environment"] as { Name: string; Value: unknown }[] | undefined) ?? [];
+    expect(environment).toContainEqual({ Name: "NODE_OPTIONS", Value: "--max-old-space-size=4096" });
+    expect(container["Ulimits"]).toEqual([{ Name: "core", SoftLimit: 0, HardLimit: 0 }]);
   });
 
   it("cannot be run by the webhook", () => {
