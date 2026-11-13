@@ -130,7 +130,18 @@ The loop calls the same handlers as the worker, with `step` in a loop per task.
 - **Build security group:** no ingress, all egress. It is not added to Aurora's ingress.
 - **Worker task role:** gains `s3:GetObject` and `s3:PutObject` on `<bucket>/work-items/*`, and `s3:ListBucket` on the bucket for the `work-items/` prefix, so that a missing key is a 404 rather than a 403 (`step` asks whether an outcome exists).
 - **State machine role:** gains running the build family and passing the build roles.
+- **Build boundary check task definition (test only):** the build task definition with the same roles, image, secret, environment, size and storage, but with entry point `sh -c` and a default command that exits 2. ECS overrides a container's command but never its entry point, so the cloud test needs this sibling to run Vitest in the build image (owner decision, 2026-11-13, after ADR 0010's boundary check). Neither the state machine nor the webhook may run it.
 - **Webhook Lambda:** unchanged.
+
+### Cloud results (task 4.8, 2026-11-13)
+
+- **Diff:** run and reviewed by the owner. **Deploy:** `pnpm infra:deploy` succeeded in 202 s, with no execution running. It created the artifact bucket, the `FactoryBuild` and `FactoryBuildBoundaryCheck` task definitions (revision 1) and the build security group. It moved the worker to revision 7 and updated the state machine.
+- **`pnpm test:cloud`:** 3 files, 5 tests passed.
+  - The boundary check matches the deployed build task definition in everything but family, entry point and command, and runs the same image.
+  - The real build task refused a decoy `FACTORY_LEDGER_SECRET` with exit 2, named it and never printed its value.
+  - In the check task, "Non-allowlisted command is denied" and "Build container holds only the model credential" passed, with no credential or decoy value in the log. The test asserts spend under the $0.10 cap; the first run's log reported $0.0014.
+  - M2's role boundary test and the webhook test still pass.
+- **First run:** the credential scenario failed, because the cloud test had not given the check task the decoy `CLAUDE_CODE_OAUTH_TOKEN`, `FACTORY_GITHUB_TOKEN` and `AWS_SECRET_ACCESS_KEY` the scenario needs. ECS sets `AWS_CONTAINER_CREDENTIALS_RELATIVE_URI` itself. The owner approved adding them to the test, and the re-run passed.
 
 ## Decisions
 

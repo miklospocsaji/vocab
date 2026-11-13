@@ -228,8 +228,8 @@ describe("factory stack: worker", () => {
 
   it("runs the worker image on Fargate, 1 vCPU and 2 GB, linux/amd64", () => {
     template.resourceCountIs("AWS::ECS::Cluster", 1);
-    // The worker's, the boundary check's and the build task's (below).
-    template.resourceCountIs("AWS::ECS::TaskDefinition", 3);
+    // The worker's, the boundary check's, the build task's and the build boundary check's (below).
+    template.resourceCountIs("AWS::ECS::TaskDefinition", 4);
     template.hasResourceProperties("AWS::ECS::TaskDefinition", {
       RequiresCompatibilities: ["FARGATE"],
       NetworkMode: "awsvpc",
@@ -573,6 +573,7 @@ describe("factory stack: state machine", () => {
     expect(runTask.filter((text) => text.includes(`:task-definition/${workerFamily()}:*`))).toHaveLength(1);
     expect(runTask.filter((text) => text.includes(`:task-definition/${buildFamily()}:*`))).toHaveLength(1);
     for (const text of runTask) expect(text).not.toContain(String(taskDefinitionOf("BoundaryCheckTaskDefinitionArn")["Family"]));
+    for (const text of runTask) expect(text).not.toContain(String(taskDefinitionOf("BuildBoundaryCheckTaskDefinitionArn")["Family"]));
     for (const statement of statements.filter((s) => s.Action.includes("ecs:RunTask"))) expect(JSON.stringify(statement.Condition)).toContain(outputTarget("ClusterArn"));
     expect(new Set(resourcesFor(statements, "iam:PassRole").map(target))).toEqual(new Set([...workerRoles(), ...buildRoles()]));
     // StopTask and DescribeTasks for the `.sync` integration, on the factory cluster's tasks only.
@@ -709,5 +710,38 @@ describe("factory stack: build task", () => {
     const webhook = JSON.stringify(policiesOf(target(fn["Role"]) ?? ""));
     expect(webhook).not.toContain(buildFamily());
     for (const role of buildRoles()) expect(webhook).not.toContain(role);
+  });
+});
+
+describe("factory stack: build boundary check", () => {
+  it("matches the build task definition in everything but its entry point and command, with the same image", () => {
+    const build = taskDefinitionOf("BuildTaskDefinitionArn");
+    const check = taskDefinitionOf("BuildBoundaryCheckTaskDefinitionArn");
+    expect(outputTarget("BuildBoundaryCheckTaskDefinitionArn")).not.toBe(outputTarget("BuildTaskDefinitionArn"));
+
+    // The same roles (so the same permissions), size, storage, platform and network mode.
+    expect(omit(check, "ContainerDefinitions", "Family")).toEqual(omit(build, "ContainerDefinitions", "Family"));
+    expect(check["TaskRoleArn"]).toEqual(build["TaskRoleArn"]);
+    expect(check["ExecutionRoleArn"]).toEqual(build["ExecutionRoleArn"]);
+
+    // The same container and image; only the entry point differs, so a command override can run Vitest.
+    const checkContainer = onlyContainer(check);
+    const buildContainer = onlyContainer(build);
+    expect(omit(checkContainer, "EntryPoint", "Command")).toEqual(omit(buildContainer, "EntryPoint", "Command"));
+    expect(checkContainer["Image"]).toEqual(buildContainer["Image"]);
+    expect(buildContainer["EntryPoint"]).toBeUndefined();
+    expect(checkContainer["EntryPoint"]).toEqual(["sh", "-c"]);
+    // With no override it refuses to run, and never prints its environment.
+    expect(checkContainer["Command"]).toHaveLength(1);
+    expect(String((checkContainer["Command"] as unknown[])[0])).toMatch(/exit 2/);
+    expect(String((checkContainer["Command"] as unknown[])[0])).not.toMatch(/\benv\b|printenv|\bset\b/);
+  });
+
+  it("is never run by the state machine or the webhook", () => {
+    const family = String(taskDefinitionOf("BuildBoundaryCheckTaskDefinitionArn")["Family"]);
+    const [, machine] = only("AWS::StepFunctions::StateMachine");
+    expect(JSON.stringify(machine["DefinitionString"])).not.toContain(family);
+    const [, fn] = only("AWS::Lambda::Function");
+    expect(JSON.stringify(policiesOf(target(fn["Role"]) ?? ""))).not.toContain(family);
   });
 });

@@ -10,7 +10,7 @@
  * - builds (add-build-loop, ADR 0011): the artifact bucket the worker and the build task share,
  *   and the build task definition from the Dockerfile's `build` target, holding only the API key,
  *   with a task role limited to `work-items/*` in the bucket and a security group the ledger does
- *   not admit
+ *   not admit; and a test-only build boundary check, the build task with an `sh -c` entry point
  * - orchestration: the work item's Step Functions state machine (JSONata, from `definition()`),
  *   which runs only the worker task definition, and the webhook Lambda behind a Function URL,
  *   outside the VPC and with no access to the ledger (ADR 0002, amendment of 2026-11-06)
@@ -113,6 +113,8 @@ export class FactoryStack extends Stack {
   readonly boundaryCheckTaskDefinition: FargateTaskDefinition;
   /** The build container's task definition, which the state machine's Build state runs. */
   readonly buildTaskDefinition: FargateTaskDefinition;
+  /** Test only: the build task with an `sh -c` entry point, for the live boundary tests (add-build-loop task 4.8). */
+  readonly buildBoundaryCheckTaskDefinition: FargateTaskDefinition;
   readonly artifactBucket: Bucket;
   readonly ledger: DatabaseCluster;
   readonly stateMachine: StateMachine;
@@ -261,18 +263,30 @@ export class FactoryStack extends Stack {
       description: "factory build tasks: no inbound access, and no access to the ledger",
       allowAllOutbound: true,
     });
-    this.buildTaskDefinition = new FargateTaskDefinition(this, "Build", {
-      cpu: 2048,
-      memoryLimitMiB: 4096,
-      ephemeralStorageGiB: 30,
-      runtimePlatform: taskSize.runtimePlatform,
-    });
+    const buildSize = { cpu: 2048, memoryLimitMiB: 4096, ephemeralStorageGiB: 30, runtimePlatform: taskSize.runtimePlatform };
+    this.buildTaskDefinition = new FargateTaskDefinition(this, "Build", buildSize);
     this.buildTaskDefinition.addToTaskRolePolicy(new PolicyStatement({ actions: ["s3:GetObject", "s3:PutObject"], resources: [workItemObjects] }));
-    this.buildTaskDefinition.addContainer(BUILD_CONTAINER, {
+    const buildContainer: ContainerDefinitionOptions = {
       image: image("BuildImage", BUILD_TARGET),
       logging: LogDrivers.awsLogs({ logGroup, streamPrefix: "build" }),
       environment: { FACTORY_AUTH_MODE: "api-key", FACTORY_STORE_BUCKET: this.artifactBucket.bucketName },
       secrets: { ANTHROPIC_API_KEY: anthropicApiKey },
+    };
+    this.buildTaskDefinition.addContainer(BUILD_CONTAINER, buildContainer);
+
+    // The build boundary check (test only; owner decision, 2026-11-13): the build task in
+    // everything but its entry point, since ECS overrides a command but never an entry point. The
+    // same roles and image, so the same permissions and code. The state machine never runs it.
+    this.buildBoundaryCheckTaskDefinition = new FargateTaskDefinition(this, "BuildBoundaryCheck", {
+      ...buildSize,
+      taskRole: this.buildTaskDefinition.taskRole,
+      executionRole: this.buildTaskDefinition.obtainExecutionRole(),
+    });
+    this.buildBoundaryCheckTaskDefinition.addContainer(BUILD_CONTAINER, {
+      ...buildContainer,
+      entryPoint: ["sh", "-c"],
+      // Without a command override it refuses to run.
+      command: ["echo 'build boundary check: pass the script to run as the command' >&2; exit 2"],
     });
 
     // Orchestration: the work item's state machine, which runs the worker and the build task and nothing else (ADR 0002).
@@ -380,6 +394,7 @@ export class FactoryStack extends Stack {
     new CfnOutput(this, "BoundaryCheckTaskDefinitionArn", { value: this.boundaryCheckTaskDefinition.taskDefinitionArn });
     new CfnOutput(this, "WorkerContainerName", { value: WORKER_CONTAINER });
     new CfnOutput(this, "BuildTaskDefinitionArn", { value: this.buildTaskDefinition.taskDefinitionArn });
+    new CfnOutput(this, "BuildBoundaryCheckTaskDefinitionArn", { value: this.buildBoundaryCheckTaskDefinition.taskDefinitionArn });
     new CfnOutput(this, "BuildContainerName", { value: BUILD_CONTAINER });
     new CfnOutput(this, "BuildSecurityGroupId", { value: buildSecurityGroup.securityGroupId });
     new CfnOutput(this, "ArtifactBucketName", { value: this.artifactBucket.bucketName });
