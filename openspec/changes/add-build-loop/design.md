@@ -168,6 +168,8 @@ The first build of issue #11 (task 1.1, test author) failed three times with `gi
 
 - **Deploy of the fixes** (4.10c, 2026-11-13): no execution was running, and the deploy took 131 s. The build task is now at revision 2: 8192 MiB, core ulimit 0 soft and hard, and `NODE_OPTIONS=--max-old-space-size=4096`. The boundary check is at revision 2 and the worker at revision 8. `pnpm test:cloud`: 3 files, 5 tests passed, including "Build boundaries hold in Fargate" on the new definitions.
 
+- **Second attempt (#12, 2026-11-13):** #11 could not be resumed, so the owner opened #12 with the same body. Proposal, the approval, Design and Plan ran in under 10 minutes. With the fixes deployed, the test author's attempts ended normally, every artifact was saved, and the `unit` and `red` checks passed. Typecheck and lint failed with `Command "typecheck:app" not found` and `Command "lint:app" not found`: the change branch is cut from `master`, and the new scripts existed only on `m3-build-loop`. The owner stopped the execution after two attempts; the third was stopped while its task started. A factory change that the gates rely on must reach `master` before a work item's branch is cut, which is another case of the coupling M3.25 removes. Next: land the two scripts on `master`, then start again with a new issue.
+
 ## Decisions
 
 - **One `step` state per move, rebuilt from the ledger.** A retried or duplicated task re-derives what to do. The alternative, one state per role and outcome, would double the states and the start-ups.
