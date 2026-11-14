@@ -126,6 +126,11 @@ export async function commitPaths(options: CommitPathsOptions): Promise<string |
   return git(worktree, "rev-parse", "HEAD");
 }
 
+/** Whether any file under `paths` differs from HEAD, untracked ones included. */
+export async function hasChangesUnder(worktree: string, paths: readonly string[]): Promise<boolean> {
+  return (await changedUnder(worktree, paths)).length > 0;
+}
+
 /** The files under `paths` that differ from HEAD, untracked ones included. */
 async function changedUnder(worktree: string, paths: readonly string[]): Promise<string[]> {
   const { stdout } = await run("git", ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", ...paths], { cwd: worktree, encoding: "utf8" });

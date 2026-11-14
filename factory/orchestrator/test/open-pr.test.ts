@@ -45,6 +45,19 @@ describe("open-pr", { timeout: 60_000 }, () => {
     expect(f.forge.comments.at(-1)).toMatchObject({ issueNumber: ISSUE.number, body: expect.stringContaining(pr?.url ?? "no url") as unknown });
   });
 
+  it("Scenario: Pull request says what its cost means", async () => {
+    // Every attempt in api-key mode: the cost was charged to the factory's API key.
+    const body = await prBodyWithAuthMode("api-key");
+    expect(body).toContain("charged to the factory's API key");
+    expect(body).not.toMatch(/no money/i);
+  });
+
+  it("says no money was charged per token when every attempt ran on the subscription", async () => {
+    const body = await prBodyWithAuthMode("subscription");
+    expect(body).toContain("no money was charged per token");
+    expect(body).not.toContain("API key");
+  });
+
   it("refuses a work item whose tasks are not all done", async () => {
     await plannedWorkItem(f);
 
@@ -52,3 +65,15 @@ describe("open-pr", { timeout: 60_000 }, () => {
     expect(f.forge.pullRequests).toEqual([]);
   });
 });
+
+/** Builds a planned work item's two tasks, sets every attempt's auth mode, opens its PR and returns the body. */
+async function prBodyWithAuthMode(mode: "api-key" | "subscription"): Promise<string> {
+  const workItem = await plannedWorkItem(f);
+  const h = builds.create([TESTS, CODE, testsFor("app/domain/test/books.test.ts", "app/domain/src/books.ts", "Books are imported"), codeFor("app/domain/src/books.ts")]);
+  expect((await buildTask(f, h, "1.1")).at(-1)?.kind).toBe("done");
+  expect((await buildTask(f, h, "1.2")).at(-1)?.kind).toBe("done");
+  await f.db.pool.query("UPDATE attempts SET auth_mode = $2 WHERE work_item_id = $1", [workItem.id, mode]);
+
+  await openPr({ db: f.db.pool, forge: f.forge }, await currentWorkItem(f));
+  return f.forge.pullRequests.at(-1)?.body ?? "";
+}

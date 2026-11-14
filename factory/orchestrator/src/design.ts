@@ -25,7 +25,7 @@ import { changeFiles, changeFolder, currentSpecs, readComplexity, readIfExists }
 import { pendingDesignFlaw } from "./design-flaw.ts";
 import { escalateWith } from "./escalation.ts";
 import { renderEvidence, renderFindings } from "./evidence.ts";
-import { commitPaths, ensureWorktree, type GitIdentity } from "./git.ts";
+import { commitPaths, ensureWorktree, hasChangesUnder, type GitIdentity } from "./git.ts";
 import type { HandlerContext, Route, Transition, WorkItemState } from "./handler.ts";
 
 /** Architect attempts per Design, in total, before the work item escalates. */
@@ -106,11 +106,16 @@ export async function design(ctx: DesignContext, item: WorkItemRow): Promise<Tra
         if (outcome.failure.reason === "auth-mode-mismatch") return escalate(ctx, workItem, architectAttempts, evidence);
         continue;
       }
+      // Contracts are code, so a design that adds or changes them is a feature commit
+      // (add-build-loop, "Commits and pull requests say what they hold").
+      const subject = (await hasChangesUnder(worktree, [CONTRACTS]))
+        ? `feat(${item.changeId}): design the change and its contracts`
+        : `docs(${item.changeId}): design the change`;
       await commitPaths({
         worktree,
         paths: [`${changeFolder(item.changeId)}/design.md`, CONTRACTS],
         ...(ctx.committer === undefined ? {} : { identity: ctx.committer }),
-        message: `docs(${item.changeId}): design the change\n\nWritten by the ${ctx.architect.name} role for issue #${String(item.issueNumber)}.`,
+        message: `${subject}\n\nWritten by the ${ctx.architect.name} role for issue #${String(item.issueNumber)}.`,
       });
       await ctx.forge.pushBranch({ worktree, branch: item.branch });
       if (complexity === "large") {

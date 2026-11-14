@@ -214,3 +214,14 @@ The build task SHALL have 8 GB of memory, SHALL run Node with a 4 GB heap (`NODE
 #### Scenario: Build task has room for its checks and writes no core dumps
 - **WHEN** the factory stack is synthesised
 - **THEN** the build task definition has 8 GB of memory, its container sets `NODE_OPTIONS` to `--max-old-space-size=4096`, and its core ulimit is 0, soft and hard
+
+### Requirement: Commits and pull requests say what they hold
+A design commit that adds or changes contracts SHALL be a `feat` commit, `feat(<change id>): design the change and its contracts`; one that changes only `design.md` stays `docs(<change id>): design the change`. The pull request's cost note SHALL follow the auth modes its attempts ran in: in `api-key` mode the cost was charged to the factory's API key, in `subscription` mode no money was charged per token.
+
+#### Scenario: Design that adds contracts is committed as a feature
+- **WHEN** the architect writes `design.md` and a file under `app/contracts/src/`, and the design is accepted
+- **THEN** the design commit holds both files, and its subject is `feat(<change id>): design the change and its contracts`
+
+#### Scenario: Pull request says what its cost means
+- **WHEN** a pull request opens for a work item whose attempts all ran in `api-key` mode
+- **THEN** its cost note says the cost was charged to the factory's API key, and does not say that no money was charged
