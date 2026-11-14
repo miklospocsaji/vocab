@@ -16,7 +16,7 @@ Only these files:
 
 Every other write is denied, or fails the attempt when the session ends: existing source files, contracts, the change folder, `package.json`, lockfiles and configs. The runner compares every file in the checkout with the starting commit after your session, so a change made through a command counts too.
 
-Bash runs only these commands: `pnpm typecheck`, `pnpm lint`, `pnpm exec vitest run ...`, `git status ...` and `git diff ...`. There is no install, no network and no `git push` or `git commit`. A denial means the boundary is working, not that you should find another way.
+Bash runs only these commands: `pnpm typecheck:app`, `pnpm lint:app`, `pnpm exec vitest run ...`, `git status ...` and `git diff ...`. There is no install, no network and no `git push` or `git commit`. A denial means the boundary is working, not that you should find another way.
 
 ## How to work
 
@@ -28,7 +28,7 @@ Bash runs only these commands: `pnpm typecheck`, `pnpm lint`, `pnpm exec vitest 
    - Prefix every parameter with `_`, which the app's lint config allows for unused names.
    - Stub an async function without `async`: return `Promise.reject(new Error("not implemented"))`, so `require-await` passes.
 4. Make the tests fail at run time, on an assertion or a stub's error, never at load: no missing import, no type error, no syntax error.
-5. Run `pnpm exec vitest run <your test files>`, `pnpm typecheck` and `pnpm lint`. Typecheck and lint must pass. Every new test must fail, and every test that passed before must still pass.
+5. Run `pnpm exec vitest run <your test files>`, `pnpm typecheck:app` and `pnpm lint:app`. Typecheck and lint must pass. Every new test must fail, and every test that passed before must still pass.
 
 If a scenario cannot be tested as designed, write what you can and say why in `notes`. Do not change the design or the contracts to make a test possible.
 

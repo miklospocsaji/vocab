@@ -207,3 +207,10 @@ The build task SHALL receive only the API key as a secret, SHALL have a task rol
 #### Scenario: Build task cannot reach the factory's secrets
 - **WHEN** the factory stack is synthesised
 - **THEN** the build task definition's only secret is the API key, its task role allows only `s3:GetObject` and `s3:PutObject` on `work-items/*` in the artifact bucket, and the ledger's security group has no rule for the build task's security group
+
+### Requirement: Build tasks have room for their checks
+The build task SHALL have 8 GB of memory, SHALL run Node with a 4 GB heap (`NODE_OPTIONS=--max-old-space-size=4096`) so the heap does not depend on Node's estimate, and SHALL write no core dumps (a core ulimit of 0), so an aborted process cannot leave gigabytes in the clone.
+
+#### Scenario: Build task has room for its checks and writes no core dumps
+- **WHEN** the factory stack is synthesised
+- **THEN** the build task definition has 8 GB of memory, its container sets `NODE_OPTIONS` to `--max-old-space-size=4096`, and its core ulimit is 0, soft and hard

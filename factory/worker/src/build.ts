@@ -110,6 +110,8 @@ export interface BuildDeps {
   install?: (worktree: string) => Promise<void>;
   /** Defaults to the gates of add-build-gates. */
   runGates?: (options: RunGatesOptions) => Promise<GatesResult>;
+  /** Makes the attempt's patch; defaults to `diffPatch`. */
+  makePatch?: (worktree: string, baseCommit: string) => Promise<string>;
   out: (text: string) => void;
   err: (text: string) => void;
 }
@@ -321,7 +323,16 @@ async function build(deps: BuildDeps, role: Role, input: BuildInput, inputKey: s
 
   const patchKey = key("patch.diff");
   const messagesKey = key("messages.jsonl");
-  await store.put(patchKey, await diffPatch(worktree, baseCommit));
+  // A patch that cannot be made still leaves the messages and a failed outcome behind
+  // (add-build-loop, "A failed patch still leaves evidence"); the git error names paths, never secrets.
+  let patchText = "";
+  try {
+    patchText = await (deps.makePatch ?? diffPatch)(worktree, baseCommit);
+  } catch (error) {
+    deps.err(`factory-build: making the patch failed, so the attempt fails with an empty patch: ${error instanceof Error ? error.message : String(error)}\n`);
+    reason ??= "error";
+  }
+  await store.put(patchKey, patchText);
   await store.put(messagesKey, recorder.toJsonl());
   const outcome = BuildOutcome.parse({
     role: role.name,

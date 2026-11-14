@@ -31,6 +31,7 @@ import {
   LogDrivers,
   OperatingSystemFamily,
   Secret as EcsSecret,
+  UlimitName,
 } from "aws-cdk-lib/aws-ecs";
 import { PolicyStatement, Role, ServicePrincipal } from "aws-cdk-lib/aws-iam";
 import { BlockPublicAccess, Bucket, BucketEncryption } from "aws-cdk-lib/aws-s3";
@@ -263,14 +264,18 @@ export class FactoryStack extends Stack {
       description: "factory build tasks: no inbound access, and no access to the ledger",
       allowAllOutbound: true,
     });
-    const buildSize = { cpu: 2048, memoryLimitMiB: 4096, ephemeralStorageGiB: 30, runtimePlatform: taskSize.runtimePlatform };
+    // 8 GB with a fixed 4 GB Node heap, and no core dumps (add-build-loop, "Build tasks have room
+    // for their checks"): typed lint ran out of Node's estimated heap at 4 GB, and the abort left
+    // gigabyte core dumps in the clone.
+    const buildSize = { cpu: 2048, memoryLimitMiB: 8192, ephemeralStorageGiB: 30, runtimePlatform: taskSize.runtimePlatform };
     this.buildTaskDefinition = new FargateTaskDefinition(this, "Build", buildSize);
     this.buildTaskDefinition.addToTaskRolePolicy(new PolicyStatement({ actions: ["s3:GetObject", "s3:PutObject"], resources: [workItemObjects] }));
     const buildContainer: ContainerDefinitionOptions = {
       image: image("BuildImage", BUILD_TARGET),
       logging: LogDrivers.awsLogs({ logGroup, streamPrefix: "build" }),
-      environment: { FACTORY_AUTH_MODE: "api-key", FACTORY_STORE_BUCKET: this.artifactBucket.bucketName },
+      environment: { FACTORY_AUTH_MODE: "api-key", FACTORY_STORE_BUCKET: this.artifactBucket.bucketName, NODE_OPTIONS: "--max-old-space-size=4096" },
       secrets: { ANTHROPIC_API_KEY: anthropicApiKey },
+      ulimits: [{ name: UlimitName.CORE, softLimit: 0, hardLimit: 0 }],
     };
     this.buildTaskDefinition.addContainer(BUILD_CONTAINER, buildContainer);
 

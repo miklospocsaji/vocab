@@ -6,6 +6,7 @@ model: claude-sonnet-5-5
 # the diff check after the session (ADR 0011).
 runsIn: build
 tools: [Read, Grep, Glob, Edit, Write, Bash]
+# The app's typecheck and lint only: the whole repository's does not fit the build task.
 # No install, no pnpm add, no network command and no git push. The runner denies git push and
 # network commands whatever this list says.
 allow:
@@ -14,8 +15,8 @@ allow:
   - Glob
   - Edit
   - Write
-  - Bash(pnpm typecheck)
-  - Bash(pnpm lint)
+  - Bash(pnpm typecheck:app)
+  - Bash(pnpm lint:app)
   - Bash(pnpm exec vitest run:*)
   - Bash(git status:*)
   - Bash(git diff:*)

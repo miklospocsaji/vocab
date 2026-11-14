@@ -92,6 +92,8 @@ interface FakeOptions {
   /** The session's outcome: its result, or an error to throw. */
   outcome?: unknown;
   gatesPass?: boolean;
+  /** Replaces the patch step, to make it fail. */
+  makePatch?: BuildDeps["makePatch"];
 }
 
 function fake(options: FakeOptions = {}): Fake {
@@ -138,6 +140,7 @@ function fake(options: FakeOptions = {}): Fake {
       gates.push(gateOptions);
       return Promise.resolve({ mode: gateOptions.mode, changeId: gateOptions.changeId, taskId: gateOptions.task.id, passed: options.gatesPass ?? true, checks: [] });
     },
+    ...(options.makePatch === undefined ? {} : { makePatch: options.makePatch }),
     out: (text) => out.push(text),
     err: (text) => err.push(text),
   };
@@ -339,6 +342,18 @@ describe("factory-build", () => {
       `M\t${SOURCE}`,
     ]);
     expect(readFileSync(join(fresh, SOURCE), "utf8")).toBe("export const words = 7;\n");
+  });
+
+  it("Scenario: Failed patch still records the attempt", async () => {
+    const result = await build("implementer", { makePatch: () => Promise.reject(new Error("git diff failed: Out of memory, malloc failed")) });
+
+    expect(result.code).toBe(BUILD_EXIT.ok);
+    const written = await outcome("implementer");
+    expect(written).toMatchObject({ outcome: "failed", reason: "error", gates: `${PREFIX("implementer")}/gates.json` });
+    expect(await store.get(written.patch)).toBe("");
+    const jsonl = await store.get(written.messages);
+    expect(jsonl.trimEnd().split("\n").map((line) => (JSON.parse(line) as { type: string }).type)).toEqual(["system", "result"]);
+    expect(result.err.join("")).toContain("git diff failed: Out of memory, malloc failed");
   });
 
   it("writes the session's messages to messages.jsonl, one per line", async () => {

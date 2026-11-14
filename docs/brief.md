@@ -345,7 +345,7 @@ Real files usually carry more: `BOOK_INFO.asin` and `guid`, `WORDS.profileid`, `
 
 ## 7. Milestones
 
-Eight milestones, each ending in a working end-to-end path; app features enter as factory workload from milestone 3 onwards.
+Ten milestones, each ending in a working end-to-end path; app features enter as factory workload from milestone 3 onwards. M3.25 and M3.5 are drafts added during M3, to be settled later.
 
 1. **M0 Foundations**
    - Deliverables: monorepo with pnpm, strict TS, Vitest, lint; `openspec init` with project conventions filled in (`openspec/config.yaml`); `CLAUDE.md`; ADRs 0001–0005 (stack, orchestration, ledger store, OpenSpec usage and capabilities, fixture anonymisation); a basic GitHub Actions CI running the gates on every PR, including `openspec validate --all --strict`; an anonymised copy of the owner's real `vocab.db` in `app/fixtures/`, produced by a committed script; the approved OpenSpec changes for M1's `orchestration` and `roles` work.
@@ -360,18 +360,52 @@ Eight milestones, each ending in a working end-to-end path; app features enter a
    - Deliverables: architect, design-reviewer, planner, test-author, implementer and failure-classifier roles; complexity routing (small skips design, medium gets the agent review, large waits for the owner); the per-task Map loop with gates, task ticking and retry with evidence (max 3); `design-flaw` routing back to Design and re-planning; scenario-coverage gate; PR opening by the deterministic runner.
    - First workload issue: the `vocab.db` importer in `app/domain/` (parse words, lookups and books; idempotent re-import), tested against the fixture.
    - Exit: the importer PR has every task in `tasks.md` ticked with green gates and no human edits to code or tests, and at least one `medium` change has passed through agent design review.
-5. **M4 Review, preview, QA and release**
+5. **M3.25 Factory in its own repository (draft, to be settled)**
+   - Why: the factory and the app share one repository, so they also share one `openspec/` folder, gates, CI, branch protection and history. App roles see factory specs as context, and an app change could carry deltas to a factory capability. Every app task's gates run the factory's tests, and the build image holds the factory's source. None of this holds up for several or larger projects.
+   - Direction:
+     - The app stays in `vocab`, with its issues. The factory moves to a new repository, made with `git filter-repo` from a clone, so its history comes along.
+     - `vocab`'s history is not rewritten. It is tagged (for example `pre-split`), and the factory is removed in one ordinary PR.
+   - What moves:
+     - to the factory repository: `factory/*`, `infra/` (the `Factory` stack), the Dockerfile, the `orchestration`, `roles` and `gates` specs, the factory ADRs and this brief
+     - stays in `vocab`: `app/*`, the fixtures, the `vocab-import` spec, ADR 0005, a product brief made from section 6, its own `CLAUDE.md`, CI and `pnpm check`
+     - an ADR about both is copied and amended in each repository, not linked across them
+   - What the factory needs to work on a repository it does not live in:
+     - a target config per project: repository, owner, gate command, writable paths per role (today's `app/*` globs in the role YAMLs), build toolchain and budgets
+     - a build image the project defines or that is built from its repository
+     - work items keyed by repository and issue number (a ledger migration)
+     - the deployed stack stays as it is; the first `infra:diff` from the new repository should show only new images, and the GitHub App stays installed on `vocab`
+   - Order: after M3 ships (add-build-loop tasks 4.10 to 4.12, with the M3 changes archived), with the old work-item branches closed or noted, and before M3.5, which is then built in the factory's own repository. One target only; features for several projects wait for a second project.
+   - To settle in a fresh session: which ADRs go where, the shape of the target config, where the build toolchain comes from, and whether `CLAUDE.md` and the CI split as described.
+   - Exit (draft): the factory, deployed from its own repository, takes one small `vocab` issue to a PR, and `vocab`'s CI runs only the app's gates.
+6. **M3.5 Owner comments and resuming work items (draft, to be settled)**
+   - Why: in M3 the factory ignores every issue comment except `/approve`, and its roles read only the issue's title and body. The owner's answers to a proposal's open questions, and any other feedback, reach the factory only by editing the issue body. That edit reaches Design and Plan, never the proposal already written.
+   - Why, too: a work item whose execution was stopped or failed cannot be resumed. The ledger ties the work item to its execution, so relabelling the issue starts an execution whose Intake answers `duplicate` and ends. The only way on is a new issue that repeats Intake, Proposal, the approval, Design and Plan. This happened in M3's exit run: the owner stopped #11's execution over a build-task bug, and after the fix the work went on as a new issue.
+   - Scope: the factory reads the owner's issue comments and acts on them. Comments are untrusted input, like the issue body, and only the owner's count. The owner can resume a work item whose execution has ended, from the state it reached.
+   - To settle for resuming:
+     - the trigger: a command such as `/resume`, a relabel, or both
+     - how Intake adopts the work item: it checks that the old execution is no longer running, which needs `states:DescribeExecution`
+     - how the later states skip what is done; each must be idempotent on a work item already past it, including the approval waits, which must not ask for a second `/approve`
+     - what happens to open attempts and the attempt counts: does a stop count toward the infra limit?
+     - whether the owner may resume an escalated work item, and with which evidence
+   - To settle: go through what a comment means in each state machine state, and what the factory does with it there. For example:
+     - while a proposal or a design awaits approval: answers to open questions, or a request to revise before approving
+     - while a worker or build task runs: queued, ignored, or a reason to stop
+     - after a work item has escalated or ended
+   - Also to settle: whether a revision is a new command next to `/approve` or any non-command comment; which roles see which comments; how comments are recorded in the ledger; how a revision re-runs a state without a second execution; what the execution history may carry (pointers only).
+   - Settled in a fresh session after M3.25, as an OpenSpec change of its own, built in the factory's repository.
+   - Exit: to be decided with the scope.
+7. **M4 Review, preview, QA and release**
    - Deliverables: reviewer role; per-PR preview stack; QA-explorer role with Playwright MCP on desktop and mobile viewports; QA report and screenshots attached to the PR; acceptance gate; Release state with production deploy and `openspec archive <id> --yes`.
    - Workload: auth with Cognito, trajectories CRUD, upload of `vocab.db` with a minimal unstyled UI.
    - Exit: on a PR with a deliberately seeded UI bug, the QA agent or reviewer catches it; after a merge, the change is archived and `openspec/specs/` reflects it.
-6. **M5 UX directions**
+8. **M5 UX directions**
    - Deliverables: three clickable prototype directions (section 6) for desktop and mobile, linked from an issue; owner choice recorded in an ADR; design system (tokens, components, layouts) committed; QA checks screenshots against it.
    - Exit: the owner has picked a direction and the existing UI is restyled by the factory to match.
-7. **M6 Enrichment, practice and the factory console**
+9. **M6 Enrichment, practice and the factory console**
    - Workload: enrichment pipeline with the `evals/enrichment/` gate; FSRS practice flow; filters by trajectory and book.
    - Factory deliverables: console page per work item (state, task progress, attempts, cost, links); per-item token budgets and the monthly budget alarm, both pausing executions.
    - Exit: the owner can import their own Kindle data and practise; every work item's cost is visible in one place.
-8. **M7 Self-improving factory**
+10. **M7 Self-improving factory**
    - Deliverables: benchmark of 10 reference tasks (replays of earlier issues) with a runner and a results table; retro role opening PRs to `factory/lessons/`, skills and role prompts; model routing per role driven by benchmark results.
    - Workload: optional EPUB upload for paragraph context.
    - Exit: a baseline benchmark run is recorded, and at least one retro PR has measurably improved success rate or cost.

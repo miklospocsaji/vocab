@@ -83,6 +83,14 @@ describe("runGates", { timeout: 120_000 }, () => {
     expect(checkOf(result, "coverage")).toMatchObject({ passed: true, missing: [] });
   });
 
+  it("Scenario: Gates check only the app's code", async () => {
+    const result = await runGates({ worktree: await worktree("green", "factory-broken"), changeId, task, mode: "green" });
+    expect(GatesResult.parse(result)).toEqual(result);
+    expect(checkOf(result, "typecheck")).toMatchObject({ passed: true, exitCode: 0 });
+    expect(checkOf(result, "lint")).toMatchObject({ passed: true, exitCode: 0 });
+    expect(result.passed).toBe(true);
+  });
+
   it("Scenario: Assertion failures pass the red gate", async () => {
     const result = await runGates({ worktree: await worktree("red"), changeId, task, mode: "red" });
     expect(GatesResult.parse(result)).toEqual(result);

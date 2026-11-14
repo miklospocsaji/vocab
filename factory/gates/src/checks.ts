@@ -58,12 +58,17 @@ export function runCommand(worktree: string, command: string, args: readonly str
   });
 }
 
+/**
+ * The app's typecheck and lint only (add-build-loop, "Gates check only the app's code"): the
+ * worktree's `typecheck:app` and `lint:app` scripts. A whole-repository lint ran out of heap in
+ * the build task, and an app task has no business with factory code.
+ */
 export function typecheck(worktree: string): Promise<CommandResult> {
-  return runCommand(worktree, "pnpm", ["typecheck"]);
+  return runCommand(worktree, "pnpm", ["typecheck:app"]);
 }
 
 export function lint(worktree: string): Promise<CommandResult> {
-  return runCommand(worktree, "pnpm", ["lint"]);
+  return runCommand(worktree, "pnpm", ["lint:app"]);
 }
 
 export function spec(worktree: string, changeId: string): Promise<CommandResult> {
