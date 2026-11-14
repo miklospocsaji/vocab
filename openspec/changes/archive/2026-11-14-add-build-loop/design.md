@@ -170,6 +170,26 @@ The first build of issue #11 (task 1.1, test author) failed three times with `gi
 
 - **Second attempt (#12, 2026-11-13):** #11 could not be resumed, so the owner opened #12 with the same body. Proposal, the approval, Design and Plan ran in under 10 minutes. With the fixes deployed, the test author's attempts ended normally, every artifact was saved, and the `unit` and `red` checks passed. Typecheck and lint failed with `Command "typecheck:app" not found` and `Command "lint:app" not found`: the change branch is cut from `master`, and the new scripts existed only on `m3-build-loop`. The owner stopped the execution after two attempts; the third was stopped while its task started. A factory change that the gates rely on must reach `master` before a work item's branch is cut, which is another case of the coupling M3.25 removes. Next: land the two scripts on `master`, then start again with a new issue.
 
+- **The exit run (#14, 2026-11-14):** after M3's code reached `master` (PR #13), the owner opened #14 with the same requirement. The owner wrote the Answers section only after seeing the proposal's questions, as in a live flow. The execution `issue-14-9bff02c0…` succeeded and opened PR #15 at 15:21 UTC, 53 minutes after it started, about 15 of them waiting for the owner's approval.
+  - **Tasks:** 1.1, 1.2 and 1.3 are ticked, each with a test commit and an implementation commit by `vocab-factory[bot]`. Every test-author and implementer attempt passed its gates on the first try: no retries, classifications or escalations.
+  - **No human edits:** `git log --format='%an' origin/master..add-read-a-kindle-vocab-db-into-books -- app/` lists 7 commits, all by `vocab-factory[bot]`.
+  - **CI:** `check` is green on PR #15 (2m26s).
+  - **Cost** (SDK estimate, api-key mode, so charged): proposal-author 1 attempt $0.24, architect 1 $0.42, design-reviewer 1 $0.09, planner 1 $0.09, test-author 3 $0.32, implementer 3 $0.29. Total $1.43. Not included: #11 and #12 (about $2–3) and the diagnosis sessions.
+  - **Agent design review:** the change is `medium`, and the design reviewer's one attempt approved, so 4.11 needs no second issue.
+  - **"Execution history holds no artifacts or secrets":** scanned on 2026-11-14 after the PR opened. The haystack was all 202 events, with every string unescaped recursively (3,037 strings). Clean, with 0 matches:
+    - 616 distinctive lines: the issue body, the change's six files, the contracts, the six patches and the six gate outputs
+    - the Anthropic API key, the webhook secret, the App private key's 25 body lines and the ledger password, read from AWS into memory and never printed
+    - GitHub token patterns
+
+    The control, the `FACTORY_TASK_TOKEN` override, was found.
+  - **Findings, fixed in 4.10d and 4.10e:**
+    - The design commit was typed `docs` though it adds contracts.
+    - The PR's cost note claimed "no money is charged" in api-key mode.
+    - `app/domain` still does not declare `@vocab/contracts`. The roles import the contract types with relative type-only imports, which work. A role that may edit package manifests is a question for later milestones.
+
+- **Deploy of 4.10e** (2026-11-14, owner's OK): no execution was running, and the deploy took 193 s. The worker is now at revision 9, the build task at revision 3 and the boundary checks at revisions 9 and 3. Only the images changed, with the design commit's type and the PR's cost note. `pnpm test:cloud` was not rerun: no boundary changed.
+- **4.12:** scenario coverage passes for `add-build-gates` and `add-build-roles` with `--tests factory`. For `add-build-loop`, `--tests factory` misses only the two stack scenarios, which `--tests infra` covers. `CLAUDE.md` is updated, and the three changes are archived in order.
+
 ## Decisions
 
 - **One `step` state per move, rebuilt from the ledger.** A retried or duplicated task re-derives what to do. The alternative, one state per role and outcome, would double the states and the start-ups.

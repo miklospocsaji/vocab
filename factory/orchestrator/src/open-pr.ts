@@ -50,7 +50,9 @@ interface RoleCost {
 async function renderBody(ctx: OpenPrContext, item: WorkItemRow, tasks: Awaited<ReturnType<typeof listTasks>>): Promise<string> {
   const usage = new Map((await listAttemptUsage(ctx.db, item.id)).map((row) => [row.attemptId, row]));
   const roles = new Map<string, RoleCost>();
-  for (const attempt of await listAttempts(ctx.db, item.id)) {
+  const attempts = await listAttempts(ctx.db, item.id);
+  const modes = new Set(attempts.flatMap((attempt) => (attempt.authMode === null ? [] : [attempt.authMode])));
+  for (const attempt of attempts) {
     const cost = roles.get(attempt.role) ?? { attempts: 0, input: 0, output: 0, cacheRead: 0, cacheCreation: 0, usd: 0 };
     const tokens = usage.get(attempt.id);
     cost.attempts += 1;
@@ -78,6 +80,21 @@ async function renderBody(ctx: OpenPrContext, item: WorkItemRow, tasks: Awaited<
       ),
       `| **Total** | | | | | | **$${total.toFixed(2)}** |`,
     ].join("\n"),
-    "The cost is the SDK's estimate; with a subscription, no money is charged per token.",
+    costNote(modes),
   ].join("\n\n");
+}
+
+/**
+ * What the estimated cost means, by the auth modes the attempts ran in (add-build-loop, "Commits
+ * and pull requests say what they hold"): in api-key mode it was charged, on the subscription not.
+ */
+function costNote(modes: ReadonlySet<string>): string {
+  const apiKey = modes.has("api-key");
+  const subscription = modes.has("subscription");
+  if (apiKey && subscription) {
+    return "The cost is the SDK's estimate. Attempts in `api-key` mode were charged to the factory's API key; those in `subscription` mode were not charged per token.";
+  }
+  if (apiKey) return "The cost is the SDK's estimate. Every attempt ran in `api-key` mode, so it was charged to the factory's API key.";
+  if (subscription) return "The cost is the SDK's estimate. Every attempt ran in `subscription` mode, so no money was charged per token.";
+  return "The cost is the SDK's estimate; no attempt recorded its auth mode.";
 }

@@ -104,7 +104,7 @@ Scenarios carried unchanged inside MODIFIED requirements keep their existing tes
 ### Exit run
 
 - [x] 4.9 Draft the importer issue (parse words, lookups and books from `vocab.db` in `app/domain`; idempotent re-import; tested against `app/fixtures/vocab.db` and `vocab-older.db`) and show it to the owner. The owner creates it and labels it `factory`. Do not deploy while its execution runs.
-- [ ] 4.10 Follow the execution to its PR. Confirm and record in the M3 PR description:
+- [x] 4.10 Follow the execution to its PR. Confirm and record in the M3 exit PR description (PR #13 landed M3's code before the exit run) and in `design.md`:
   - every task in `tasks.md` ticked, each in a commit by `vocab-factory[bot]` with green gates
   - no commit by anyone else touching `app/**/src` or `app/**/test` (`git log --format='%an' -- app/` on the branch)
   - CI green on the PR
@@ -117,6 +117,8 @@ Scenarios carried unchanged inside MODIFIED requirements keep their existing tes
   - Scenario: Failed patch still records the attempt
   - Scenario: Build task has room for its checks and writes no core dumps
 - [x] 4.10b Write the fixes: `typecheck:app` and `lint:app` scripts used by the gates and the build roles, the 10 MB limit in the diff check and the patch, the patch fallback in `factory-build`, and the build task's 8 GB, heap and core ulimit. Record the findings in `design.md`.
-- [ ] 4.10c Confirm with the owner, run `pnpm infra:diff`, `pnpm infra:deploy` and `pnpm test:cloud`, then restart the work item of 4.10 and continue 4.10.
-- [ ] 4.11 If the importer was not `medium`, repeat with a second issue the owner writes, which is `medium`, up to its PR. Record that it passed agent design review.
-- [ ] 4.12 Run `pnpm gates coverage --tests factory` for `add-build-gates`, `add-build-roles` and `add-build-loop`. Update `CLAUDE.md` with the build task, `pnpm factory approve`, `--until pr`, the artifact bucket and how to follow a build in the logs. Archive `add-build-gates`, then `add-build-roles`, then `add-build-loop`.
+- [x] 4.10c Confirm with the owner, run `pnpm infra:diff`, `pnpm infra:deploy` and `pnpm test:cloud`, then restart the work item of 4.10 and continue 4.10.
+- [x] 4.10d Failing tests for two findings of the exit run's PR: Scenario: Design that adds contracts is committed as a feature; Scenario: Pull request says what its cost means.
+- [x] 4.10e Write the design commit's type and the PR's cost note by auth mode. Deploy with the owner's OK.
+- [x] 4.11 If the importer was not `medium`, repeat with a second issue the owner writes, which is `medium`, up to its PR. Record that it passed agent design review.
+- [x] 4.12 Run `pnpm gates coverage --tests factory` for `add-build-gates`, `add-build-roles` and `add-build-loop`. Update `CLAUDE.md` with the build task, `pnpm factory approve`, `--until pr`, the artifact bucket and how to follow a build in the logs. Archive `add-build-gates`, then `add-build-roles`, then `add-build-loop`.

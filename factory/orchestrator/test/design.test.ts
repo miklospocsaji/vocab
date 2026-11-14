@@ -7,7 +7,7 @@ import { design, MAX_DESIGN_ATTEMPTS, type DesignContext } from "../src/design.t
 import { changeFileReader } from "../src/git.ts";
 import { DESIGN_APPROVAL_INSTRUCTION } from "../src/summary.ts";
 import { createFakeRoleRunner, type FakeStep } from "./fake-role-runner.ts";
-import { BOT, CHANGE, changedFiles, git, identityOf, ISSUE, proposedWorkItem, remoteHead, SPEC, useWorkItemFixture } from "./work-item-fixture.ts";
+import { BOT, CHANGE, CHANGE_ID, changedFiles, git, identityOf, ISSUE, proposedWorkItem, remoteHead, SPEC, useWorkItemFixture } from "./work-item-fixture.ts";
 
 const f = useWorkItemFixture("design");
 
@@ -129,6 +129,30 @@ describe("design", { timeout: 30_000 }, () => {
     expect(head).not.toBe(before);
     expect(changedFiles(f, head)).toEqual([`${CHANGE}/design.md`]);
     expect(identityOf(f, head)).toBe(`${BOT.name}|${BOT.email}|${BOT.name}|${BOT.email}`);
+  });
+
+  it("Scenario: Design that adds contracts is committed as a feature", async () => {
+    const contract = "app/contracts/src/lookup.ts";
+    const withContracts: FakeStep = {
+      // The fake writes relative to the change folder; the contracts live at the repository's root.
+      files: { "design.md": DESIGN_MD, [`../../../${contract}`]: "export interface Lookup {\n  id: string;\n}\n" },
+      result: DESIGN_RESULT,
+    };
+    const { ctx } = designContext([withContracts, APPROVE]);
+
+    await design(ctx, await approvedWorkItem("medium"));
+
+    const head = remoteHead(f);
+    expect([...changedFiles(f, head)].sort()).toEqual([contract, `${CHANGE}/design.md`].sort());
+    expect(git(f.remote, "log", "-1", "--format=%s", head)).toBe(`feat(${CHANGE_ID}): design the change and its contracts`);
+  });
+
+  it("commits a design without contracts as docs", async () => {
+    const { ctx } = designContext([architectStep(), APPROVE]);
+
+    await design(ctx, await approvedWorkItem("medium"));
+
+    expect(git(f.remote, "log", "-1", "--format=%s", remoteHead(f))).toBe(`docs(${CHANGE_ID}): design the change`);
   });
 
   it("Scenario: Large design waits for the owner", async () => {
