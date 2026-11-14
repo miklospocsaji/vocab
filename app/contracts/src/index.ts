@@ -1,2 +1,9 @@
-// Public entry point of @vocab/contracts. Empty until the first work item adds to it.
-export {};
+// Public entry point of @vocab/contracts.
+export {
+  VocabBook,
+  VocabImport,
+  VocabImportErrorCode,
+  VocabLookup,
+  VocabWord,
+} from "./vocab-import.ts";
+export type { ParseVocabDb, ReimportVocab } from "./vocab-import.ts";
