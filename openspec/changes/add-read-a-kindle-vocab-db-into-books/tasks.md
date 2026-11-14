@@ -10,7 +10,7 @@
   - Tests: app/domain/test/reimport.test.ts
   - Scenarios: Newer file adds only new lookups; Re-importing the same file adds nothing; Only unknown words and books are returned; Older plus new equals newer
 
-- [ ] 1.3 Export the importer from the domain entry point
+- [x] 1.3 Export the importer from the domain entry point
   - Files: app/domain/src/index.ts
   - Tests: app/domain/test/entry-point.test.ts
   - Scenarios: Importer is usable through the package entry points
