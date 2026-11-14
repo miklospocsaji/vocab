@@ -8,21 +8,10 @@
   },
   "scripts": {
     "typecheck": "tsc -p . && pnpm -r --if-present typecheck",
-    "typecheck:app": "pnpm -r --filter \"./app/**\" --if-present typecheck",
     "lint": "eslint .",
-    "lint:app": "eslint app/",
-    "test": "vitest run --project unit",
+    "test": "vitest run",
     "spec:validate": "OPENSPEC_TELEMETRY=0 openspec validate --all --strict --no-interactive",
-    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm spec:validate",
-    "test:live": "vitest run --project live",
-    "test:docker": "vitest run --project docker",
-    "test:cloud": "vitest run --project cloud",
-    "db:up": "docker compose up -d --wait ledger",
-    "factory": "node factory/cli/src/main.ts",
-    "gates": "node factory/gates/src/cli.ts",
-    "infra:synth": "pnpm --dir infra exec cdk synth",
-    "infra:diff": "pnpm --dir infra exec cdk diff",
-    "infra:deploy": "pnpm --dir infra exec cdk deploy"
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm spec:validate"
   },
   "dependencies": {
     "@fission-ai/openspec": "1.15.0"

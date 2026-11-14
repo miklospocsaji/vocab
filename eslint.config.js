@@ -3,8 +3,7 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  // The gates' fixture worktrees are broken on purpose in places; the gates tests lint them in a copy.
-  { ignores: ["**/node_modules/", "**/dist/", "**/coverage/", "**/cdk.out/", ".claude/", "openspec/", "factory/gates/test/fixtures/"] },
+  { ignores: ["**/node_modules/", "**/dist/", "**/coverage/", "**/cdk.out/", ".claude/", "openspec/"] },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   {
@@ -13,8 +12,8 @@ export default tseslint.config(
       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
     },
   },
-  // Agent-written app code: an unused parameter or variable named `_x` is deliberate, as in
-  // the test author's stubs (add-build-roles). Factory code keeps the default rule.
+  // An unused parameter or variable named `_x` is deliberate, as in the stub of a source file
+  // written before its implementation.
   {
     files: ["app/**/*.ts"],
     rules: {
