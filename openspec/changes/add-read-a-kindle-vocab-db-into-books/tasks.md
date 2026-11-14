@@ -1,6 +1,6 @@
 # Tasks
 
-- [ ] 1.1 Parse a vocab.db into books, words and lookups
+- [x] 1.1 Parse a vocab.db into books, words and lookups
   - Files: app/domain/src/vocab-import/errors.ts, app/domain/src/vocab-import/parse.ts
   - Tests: app/domain/test/parse.test.ts
   - Scenarios: Full fixture parses to its known counts; Older fixture parses to its known lookup count; Fields are carried over as stored; Parsing leaves the file unchanged; Repeated lookups are all kept; Lookup with a missing word fails; Lookup with a missing book fails; Non-SQLite file is rejected; Missing table is rejected; Lists are sorted by id
