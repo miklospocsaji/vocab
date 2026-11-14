@@ -1,5 +1,0 @@
-schema: spec-driven
-created: 2026-11-01
-goal: "M2: labelling an issue `factory` runs Intake and Proposal in AWS and
-  waits for the owner's /approve, with nothing running on the laptop"
-x-complexity: large

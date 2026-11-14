@@ -1,2 +1,0 @@
-#!/bin/sh
-node probe-env.js spec && exec node node_modules/@fission-ai/openspec/bin/openspec.js "$@"
