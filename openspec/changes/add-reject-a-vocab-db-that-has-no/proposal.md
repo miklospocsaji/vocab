@@ -6,11 +6,11 @@ Today the importer accepts a Kindle `vocab.db` whose `LOOKUPS` table is empty an
 
 ## What Changes
 
-- Parsing a `vocab.db` that has the expected tables but no rows in `LOOKUPS` fails with the existing import error, and the message says the file has no lookups.
+- Parsing a `vocab.db` that has the expected tables but no rows in `LOOKUPS` fails with the existing import error carrying a new code, `no-lookups`, and the message says the file has no lookups. The check runs after the SQLite and table checks.
 - Rows in `WORDS` or `BOOK_INFO` do not change this: a file with no lookups is rejected.
 - Re-import inherits this, because the newer file is parsed first: a newer file with no lookups fails when it is read. A newer file that has lookups, none of them new, still gives an empty re-import result, as it does today.
 - Files that already fail (not SQLite, missing table) keep their current errors.
-- Out of scope: adding a new error code to the contracts (the issue asks not to), UI handling of the error, and any change to the fixtures or the anonymiser.
+- Out of scope: UI handling of the error, and any change to the fixtures or the anonymiser.
 
 ## Capabilities
 
@@ -23,6 +23,6 @@ Today the importer accepts a Kindle `vocab.db` whose `LOOKUPS` table is empty an
 ## Impact
 
 - `app/domain` vocab-import parser: a new rejection after the table checks.
-- `app/contracts`: no new error code is added; the rejection uses the existing import error type. Which existing code the error carries is an open question.
+- `app/contracts`: `VocabImportErrorCode` gains `no-lookups`, so the change is `medium` (a contract change within one capability). The rejection uses the existing import error type.
 - Re-import behaviour for newer files with lookups is unchanged.
 - No new dependencies or systems.
