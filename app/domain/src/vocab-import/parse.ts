@@ -81,6 +81,10 @@ export const parseVocabDb: ParseVocabDb = (path: string) => {
         `${path} has no ${missing.join(", ")} table`,
       );
 
+    const has = db.prepare("SELECT EXISTS(SELECT 1 FROM LOOKUPS) AS has").get() as Row;
+    if (Number(has["has"]) === 0)
+      throw new VocabImportError("no-lookups", `${path} has no lookups`);
+
     const books: VocabBook[] = (
       db.prepare("SELECT rowid, id, title, authors, lang FROM BOOK_INFO").all() as Row[]
     ).map((r) => {

@@ -1,4 +1,7 @@
-import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { VocabImport } from "../../contracts/src/index.ts";
 import { parseVocabDb } from "../src/vocab-import/parse.ts";
@@ -43,6 +46,37 @@ describe("reimportVocab", () => {
     expect(result.lookups.map((l) => l.id)).toEqual(["L2", "L3"]);
     expect(result.words.map((w) => w.id)).toEqual(["en:fresh"]);
     expect(result.books).toEqual([]);
+  });
+
+  it("Scenario: Newer file with no lookups fails when read", () => {
+    const old = older();
+    const path = join(mkdtempSync(join(tmpdir(), "vocab-reimport-")), "empty.db");
+    const db = new DatabaseSync(path);
+    db.exec("CREATE TABLE WORDS (id TEXT PRIMARY KEY, word TEXT, stem TEXT, lang TEXT, category INTEGER, timestamp INTEGER, profileid TEXT)");
+    db.exec("CREATE TABLE BOOK_INFO (id TEXT PRIMARY KEY, asin TEXT, guid TEXT, lang TEXT, title TEXT, authors TEXT)");
+    db.exec("CREATE TABLE LOOKUPS (id TEXT PRIMARY KEY, word_key TEXT, book_key TEXT, dict_key TEXT, pos TEXT, usage TEXT, timestamp INTEGER)");
+    db.close();
+    let err: (Error & { code?: string }) | undefined;
+    try {
+      reimportVocab(old, parseVocabDb(path));
+    } catch (e) {
+      err = e as Error & { code?: string };
+    }
+    expect(err?.code).toBe("no-lookups");
+    expect(err?.message).toMatch(/no lookups/);
+  });
+
+  it("Scenario: Newer file with only known lookups returns nothing new", () => {
+    const result = reimportVocab(newer(), older());
+    expect(result).toEqual({ books: [], words: [], lookups: [] });
+    // an empty-lookups file is rejected rather than giving this empty result
+    const path = join(mkdtempSync(join(tmpdir(), "vocab-reimport-")), "empty2.db");
+    const db = new DatabaseSync(path);
+    db.exec("CREATE TABLE WORDS (id TEXT PRIMARY KEY, word TEXT, stem TEXT, lang TEXT, category INTEGER, timestamp INTEGER, profileid TEXT)");
+    db.exec("CREATE TABLE BOOK_INFO (id TEXT PRIMARY KEY, asin TEXT, guid TEXT, lang TEXT, title TEXT, authors TEXT)");
+    db.exec("CREATE TABLE LOOKUPS (id TEXT PRIMARY KEY, word_key TEXT, book_key TEXT, dict_key TEXT, pos TEXT, usage TEXT, timestamp INTEGER)");
+    db.close();
+    expect(() => parseVocabDb(path)).toThrow(/no lookups/);
   });
 
   it("Scenario: Older plus new equals newer", () => {

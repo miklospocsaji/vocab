@@ -64,10 +64,16 @@ export const VocabImportErrorCode = z.enum([
   "null-id",
   "unexpected-type",
   "dangling-reference",
+  /** The file has the expected tables but no rows in `LOOKUPS` (change add-reject-a-vocab-db-that-has-no). */
+  "no-lookups",
 ]);
 export type VocabImportErrorCode = z.infer<typeof VocabImportErrorCode>;
 
-/** Reads the `vocab.db` at `path`, read-only, into plain data. Throws on any invalid input. */
+/**
+ * Reads the `vocab.db` at `path`, read-only, into plain data. Throws on any invalid input,
+ * including a file with no rows in `LOOKUPS` (code `no-lookups`); never returns an empty
+ * `lookups` list.
+ */
 export type ParseVocabDb = (path: string) => VocabImport;
 
 /**
