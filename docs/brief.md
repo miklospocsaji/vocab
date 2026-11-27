@@ -77,10 +77,10 @@ app/
 └── fixtures/    # sample vocab.db, sample EPUB
 evals/
 └── enrichment/  # word-in-context translation eval set
-infra/           # the app and preview stacks (CDK)
+infra/           # the CDK app: base stacks (zone, certificates, database) and the app stack, per environment
 ```
 
-Every stack lives in eu-central-1. The one exception is a small certificate stack in us-east-1 for the CloudFront certificates.
+Every stack lives in eu-central-1. The one exception is a small certificate stack in us-east-1 for the CloudFront certificate. The environments and how they are deployed are in ADR 0006.
 
 ## 3. Owner decisions
 
@@ -91,4 +91,5 @@ Decided on 26–27 October 2026 and treated as requirements.
 - [x] **Users:** owner only. Admin-created Cognito users, no sign-up page; the data model stays multi-user.
 - [x] **Fixture data:** an anonymised copy in git, produced by a committed script that keeps the structure and real sentences from a few books and strips device IDs and ASINs.
 - [x] **UX direction:** decide after the three prototypes; no leaning before then.
-- [x] **Domain:** web app at `vocab.logtion.app`, API at `api.vocab.logtion.app`. The owner's domain `logtion.app` delegates `vocab.logtion.app` to a Route 53 hosted zone in the app's AWS account (NS records added at the owner's DNS). Previews live at `pr-<n>.vocab.logtion.app` and `api.pr-<n>.vocab.logtion.app`. Certificates come from ACM with DNS validation; the CloudFront certificate must be issued in us-east-1, while the API certificate lives in eu-central-1.
+- [x] **Domain:** web app at `vocab.logtion.app`, API at `api.vocab.logtion.app`. The owner's domain `logtion.app` delegates `vocab.logtion.app` to a Route 53 hosted zone in the app's AWS account (NS records added at the owner's DNS). Certificates come from ACM with DNS validation; the CloudFront certificate must be issued in us-east-1, while the API certificate lives in eu-central-1.
+- [x] **Environments (27 November 2026):** two, `test` and `prod`, in the app's own AWS account (100159507559), replacing a preview per pull request. `test` runs the `test` branch, which is `master` plus at most one feature branch, at `test.vocab.logtion.app` and `api.test.vocab.logtion.app`. Its database is rebuilt on every deploy. `prod` runs `master`. Both share one Aurora cluster, with one database each (ADRs 0006 and 0007).
