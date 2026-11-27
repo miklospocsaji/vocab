@@ -34,8 +34,8 @@ Built by hand (the owner or a local Claude Code session), in this order. Tests c
 
 ## 5. `app/web`
 
-- [ ] 5.1 Tests in `app/web/test/App.test.tsx` with a stubbed `fetch`: shows "checking" first, then "ok" for a healthy response, and "unavailable" for a 503, a network error or a response that fails `HealthResponse`
-- [ ] 5.2 `index.html`, `vite.config.ts`, `src/main.tsx` (router with one route), `src/App.tsx`, `src/api.ts` (reads `import.meta.env.VITE_API_URL`); `pnpm --filter @vocab/web build` writes `app/web/dist`
+- [x] 5.1 Tests in `app/web/test/App.test.tsx` with a stubbed `fetch`: shows "checking" first, then "ok" for a healthy response, and "unavailable" for a 503, a network error or a response that fails `HealthResponse`
+- [x] 5.2 `index.html`, `vite.config.ts`, `src/main.tsx` (router with one route), `src/App.tsx`, `src/api.ts` (reads `import.meta.env.VITE_API_URL`); `pnpm --filter @vocab/web build` writes `app/web/dist`
 
 ## 6. `infra`
 
