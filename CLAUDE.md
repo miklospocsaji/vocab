@@ -8,6 +8,8 @@ Kindle Vocab: a web app for practising the words looked up on a Kindle. `docs/br
 - `pnpm check`: all gates: typecheck, lint, unit tests, `openspec validate --all --strict`
 - `pnpm test` / `pnpm lint` / `pnpm typecheck` / `pnpm spec:validate`: single gates
 - `pnpm exec openspec <cmd>`: the pinned OpenSpec CLI (`list`, `show <id>`, `validate <id> --strict`, `archive <id> --yes`)
+- `pnpm infra:synth --env base|test|prod [--out <dir>]`: builds the web app (`test`, `prod`) and synthesises the cloud assembly, with no AWS credentials and no AWS calls; `test` and `prod` need `config.base` filled in
+- `pnpm infra:deploy --env base|test|prod [--stack <name>]`: the owner's deploy by hand, with `AWS_PROFILE=vocab-app`: synth, then `cdk deploy` of that assembly
 
 ## Repo map
 
@@ -15,8 +17,11 @@ Kindle Vocab: a web app for practising the words looked up on a Kindle. `docs/br
 - `docs/`: brief and ADRs
 - `app/contracts`: zod contracts
 - `app/domain`: pure domain logic (the `vocab.db` importer)
+- `app/api`: Lambda handlers, the `Db` interface (Data API in AWS, PGlite in tests) and the migrations
+- `app/web`: the React PWA (Vite, React Router)
 - `app/fixtures`: anonymised Kindle `vocab.db` fixtures and the script that makes them
 - `app/*`: see brief section 2; packages appear as the work needs them
+- `infra`: the CDK app: base stacks in `src/base/` (owner only), the app stack in `src/app-stack.ts` and `src/app/`, config in `config.ts`, scripts in `scripts/`
 
 ## Conventions
 

@@ -26,3 +26,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      # Synth needs no AWS credentials and makes no lookups (ADR 0006); this job has none.
+      # Task 7.3 adds --env test and --env prod once the certificate ARN is committed.
+      - run: pnpm infra:synth --env base

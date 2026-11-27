@@ -11,7 +11,9 @@
     "lint": "eslint .",
     "test": "vitest run",
     "spec:validate": "OPENSPEC_TELEMETRY=0 openspec validate --all --strict --no-interactive",
-    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm spec:validate"
+    "check": "pnpm typecheck && pnpm lint && pnpm test && pnpm spec:validate",
+    "infra:synth": "node infra/scripts/synth.ts",
+    "infra:deploy": "node infra/scripts/deploy.ts"
   },
   "dependencies": {
     "@fission-ai/openspec": "1.15.0"
