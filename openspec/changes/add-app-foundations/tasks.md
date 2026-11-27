@@ -12,8 +12,8 @@ Built by hand (the owner or a local Claude Code session), in this order. Tests c
 
 ## 2. Contracts
 
-- [ ] 2.1 Tests in `app/contracts/test/health.test.ts`: `HealthResponse` accepts the ok and the unavailable shapes and rejects an unknown field and an unknown `database` value
-- [ ] 2.2 `app/contracts/src/health.ts` and its re-export from `src/index.ts`
+- [x] 2.1 Tests in `app/contracts/test/health.test.ts`: `HealthResponse` accepts the ok and the unavailable shapes and rejects an unknown field and an unknown `database` value
+- [x] 2.2 `app/contracts/src/health.ts` and its re-export from `src/index.ts`
 
 ## 3. `app/api`: database access and migrations
 

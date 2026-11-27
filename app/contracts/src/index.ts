@@ -7,3 +7,4 @@ export {
   VocabWord,
 } from "./vocab-import.ts";
 export type { ParseVocabDb, ReimportVocab } from "./vocab-import.ts";
+export { HealthResponse } from "./health.ts";
