@@ -4,11 +4,11 @@ Built by hand (the owner or a local Claude Code session), in this order. Tests c
 
 ## 1. Workspace and root configuration
 
-- [ ] 1.1 Add `infra` to `pnpm-workspace.yaml`; create the empty packages `@vocab/web` (`app/web`), `@vocab/api` (`app/api`) and `@vocab/infra` (`infra`), each with `package.json` (`"type": "module"`, a `typecheck` script) and `tsconfig.json` extending `tsconfig.base.json`; `app/web`'s adds `jsx: "react-jsx"`, `lib` with `dom`, and `types` with `vite/client`
-- [ ] 1.2 Install the dependencies from design.md's table, exact versions (`--save-exact`); `aws-cdk-lib` 2.275.0 and `aws-cdk` 2.1147.0
-- [ ] 1.3 `vitest.config.ts`: the `node` and `web` projects from design.md (happy-dom, Testing Library cleanup and `jest-dom` matchers in a `web` setup file); `pnpm test` runs both; an empty project does not fail the run; `pnpm exec vitest run app/ --reporter=json --outputFile=<file>` runs only the `app/` tests and reports their full names
-- [ ] 1.4 `eslint.config.js`: browser globals and `eslint-plugin-react-hooks` for `app/web/**/*.{ts,tsx}`; the `_` unused-variable rule extended to `.tsx` and `infra/**`
-- [ ] 1.5 Check `.gitignore` covers `infra/cdk.out/` and `app/web/dist/`; `pnpm check` green
+- [x] 1.1 Add `infra` to `pnpm-workspace.yaml`; create the empty packages `@vocab/web` (`app/web`), `@vocab/api` (`app/api`) and `@vocab/infra` (`infra`), each with `package.json` (`"type": "module"`, a `typecheck` script) and `tsconfig.json` extending `tsconfig.base.json`; `app/web`'s adds `jsx: "react-jsx"`, `lib` with `dom`, and `types` with `vite/client`
+- [x] 1.2 Install the dependencies from design.md's table, exact versions (`--save-exact`); `aws-cdk-lib` 2.275.0 and `aws-cdk` 2.1147.0
+- [x] 1.3 `vitest.config.ts`: the `node` and `web` projects from design.md (happy-dom, Testing Library cleanup and `jest-dom` matchers in a `web` setup file); `pnpm test` runs both; an empty project does not fail the run; `pnpm exec vitest run app/ --reporter=json --outputFile=<file>` runs only the `app/` tests and reports their full names
+- [x] 1.4 `eslint.config.js`: browser globals and `eslint-plugin-react-hooks` for `app/web/**/*.{ts,tsx}`; the `_` unused-variable rule extended to `.tsx` and `infra/**`
+- [x] 1.5 Check `.gitignore` covers `infra/cdk.out/` and `app/web/dist/`; `pnpm check` green
 
 ## 2. Contracts
 
