@@ -40,19 +40,19 @@ Built by hand (the owner or a local Claude Code session), in this order. Tests c
 ## 6. `infra`
 
 - [ ] 6.1 `infra/config.ts` as in design.md, with empty `base` ids
-- [ ] 6.2 Infra tests (`infra/test/`, `aws:cdk:bundling-stacks: []`) for the base stacks: the zone; the CloudFront certificate in us-east-1 with both names; the shared stack's API certificate with both names, VPC with isolated subnets and no NAT gateway, cluster with Data API on, 0 ACU minimum, auto-pause, deletion protection and `RETAIN`, the three secrets, the bootstrap custom resource and the four SSM parameters
-- [ ] 6.3 `infra/src/base/zone-stack.ts`, `certificate-stack.ts`, `shared-stack.ts`; the bootstrap custom resource's handler (roles and databases, idempotent, `CONNECT` revoked from `PUBLIC`) with tests on PGlite where it can run there
+- [ ] 6.2 Infra tests (`infra/test/`, `aws:cdk:bundling-stacks: []`, fixed dummy ids passed as props, never `config.base`) for the base stacks: the zone and its `/vocab/base/hosted-zone-id` parameter; the CloudFront certificate in us-east-1 with both names; the shared stack's API certificate with both names, VPC with isolated subnets and no NAT gateway, cluster with Data API on, 0 ACU minimum, auto-pause, deletion protection and `RETAIN`, the three secrets (the environment ones in the Data API's shape), the bootstrap custom resource, its function the only one that may read the master secret, and the four SSM parameters
+- [ ] 6.3 `infra/src/base/zone-stack.ts`, `certificate-stack.ts`, `shared-stack.ts`; the standalone bootstrap handler `infra/src/base/db-bootstrap/handler.ts` (roles and databases, idempotent, `CONNECT` revoked from `PUBLIC`; `CREATE ROLE` when missing, `ALTER ROLE … PASSWORD` otherwise). Tests first: unit tests of the pure `bootstrapStatements(names, passwords)`, including a refused password that does not match `^[A-Za-z0-9]{32}$`; the handler with stubbed `RDSDataClient` and `SecretsManagerClient`, which never logs secrets or SQL; and the statements run on PGlite if PGlite supports `CREATE ROLE` (checked; the test is dropped if it does not)
 - [ ] 6.4 Infra tests for `VocabApp-test` and `VocabApp-prod`: private bucket with origin access control; distribution with the environment's alias, HTTPS only, SPA fallback; HTTP API with the custom domain, CORS for the web origin only and throttling; Route 53 records; the health and migrate functions on Node 24 arm64; each environment's functions may read only their own database secret and never the master secret; the migrate custom resource carries the commit and the environment's `RESET_DATABASE`; outputs `WebUrl`, `ApiUrl`, `Commit`; `prod` has termination protection and retains its bucket; no stack reports missing context
-- [ ] 6.5 `infra/src/app-stack.ts` and its constructs in `infra/src/app/`; `infra/bin/app.ts` picking stacks by `-c env=base|test|prod`
-- [ ] 6.6 `infra/scripts/synth.ts` (`pnpm infra:synth --env <env> --out <dir>`) and `infra/scripts/deploy.ts` (`pnpm infra:deploy --env <env>`), as in design.md; a test that synth refuses an unknown environment and fails on missing context
-- [ ] 6.7 CI: after `pnpm check`, `pnpm infra:synth --env test` and `--env prod` with no AWS credentials; `pnpm infra:synth --env test` also passes locally with no AWS credentials in the environment
+- [ ] 6.5 `infra/src/app-stack.ts` and its constructs in `infra/src/app/`; `infra/bin/app.ts` picking stacks by `-c env=base|test|prod`, with design.md's handling of empty `config.base` ids (tested)
+- [ ] 6.6 `infra/scripts/synth.ts` (`pnpm infra:synth --env <env> --out <dir>`) and `infra/scripts/deploy.ts` (`pnpm infra:deploy --env <env> [--stack <name>]`), as in design.md; a test that synth refuses an unknown environment and fails on missing context
+- [ ] 6.7 CI: after `pnpm check`, `pnpm infra:synth --env base` with no AWS credentials; it also passes locally with no AWS credentials in the environment
 - [ ] 6.8 `CLAUDE.md`: commands (`infra:synth`, `infra:deploy`, `AWS_PROFILE=vocab-app`) and repo map (`app/web`, `app/api`, `infra`)
 
 ## 7. Base stacks (owner)
 
-- [ ] 7.1 `pnpm infra:deploy --env base` for `VocabZone` only; add an NS record for `vocab` at `logtion.app`'s DNS with the zone's four name servers; wait until `dig +short NS vocab.logtion.app` returns them
-- [ ] 7.2 Commit the zone id into `infra/config.ts`; deploy `VocabCertificates` (us-east-1) and wait for the certificate to be issued
-- [ ] 7.3 Commit the certificate ARN into `infra/config.ts`; deploy `VocabShared`; check the four SSM parameters exist and the bootstrap made both roles and databases (a Data API `SELECT current_user` with each environment's secret)
+- [ ] 7.1 `pnpm infra:deploy --env base --stack VocabZone`; add an NS record for `vocab` at `logtion.app`'s DNS with the zone's four name servers; wait until `dig +short NS vocab.logtion.app` returns them
+- [ ] 7.2 Commit the zone id into `infra/config.ts`; `pnpm infra:deploy --env base` (`VocabCertificates` in us-east-1 and `VocabShared`); wait for both certificates to be issued; check the five SSM parameters exist and the bootstrap made both roles and databases (a Data API `SELECT current_user` with each environment's secret)
+- [ ] 7.3 Commit the certificate ARN into `infra/config.ts`; extend CI's synth step to `--env test` and `--env prod`
 
 ## 8. First app deploys (owner)
 
