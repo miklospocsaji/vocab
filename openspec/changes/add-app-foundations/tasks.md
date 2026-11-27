@@ -17,13 +17,13 @@ Built by hand (the owner or a local Claude Code session), in this order. Tests c
 
 ## 3. `app/api`: database access and migrations
 
-- [ ] 3.1 Tests for the `:name` to `$n` rewrite: repeated names, a `::` cast, names inside single-quoted strings and `--` comments left alone, an unknown name rejected
-- [ ] 3.2 `src/db/db.ts` (the `Db`, `Row` and `Scalar` types) and `src/db/pglite.ts` (`createPgliteDb`, with the rewrite and `transaction`)
-- [ ] 3.3 Tests for the PGlite adapter on an in-memory PGlite: query with parameters, `null`, booleans and numbers round-trip; a failing statement in `transaction` rolls back
-- [ ] 3.4 Tests for the migration runner on PGlite, with test-only migrations: a fresh database gets every migration and its records; a second run applies nothing; a new migration at the end is applied alone; `reset` drops the `app` schema's tables and data and applies everything again; a failing migration leaves earlier ones recorded and itself unrecorded
-- [ ] 3.5 `src/migrations/index.ts` (empty list) and `src/migrate.ts`
-- [ ] 3.6 Tests for the Data API adapter with a stubbed `RDSDataClient` (no AWS): parameters are sent typed (`stringValue`, `longValue`, `doubleValue`, `booleanValue`, `isNull`); JSON records become rows; `DatabaseResumingException` is retried until success, and gives up after 30 s with the error; `transaction` begins, passes `transactionId`, commits, and rolls back on error
-- [ ] 3.7 `src/db/data-api.ts` (`createDataApiDb`)
+- [x] 3.1 Tests for the `:name` to `$n` rewrite: repeated names, a `::` cast, names inside single-quoted strings and `--` comments left alone, an unknown name rejected
+- [x] 3.2 `src/db/db.ts` (the `Db`, `Row` and `Scalar` types) and `src/db/pglite.ts` (`createPgliteDb`, with the rewrite and `transaction`)
+- [x] 3.3 Tests for the PGlite adapter on an in-memory PGlite: query with parameters, `null`, booleans and numbers round-trip; a failing statement in `transaction` rolls back
+- [x] 3.4 Tests for the migration runner on PGlite, with test-only migrations: a fresh database gets every migration and its records; a second run applies nothing; a new migration at the end is applied alone; `reset` drops the `app` schema's tables and data and applies everything again; a failing migration leaves earlier ones recorded and itself unrecorded
+- [x] 3.5 `src/migrations/index.ts` (empty list) and `src/migrate.ts`
+- [x] 3.6 Tests for the Data API adapter with a stubbed `RDSDataClient` (no AWS): parameters are sent typed (`stringValue`, `longValue`, `doubleValue`, `booleanValue`, `isNull`); JSON records become rows; `DatabaseResumingException` is retried until success, and gives up after 30 s with the error; `transaction` begins, passes `transactionId`, commits, and rolls back on error
+- [x] 3.7 `src/db/data-api.ts` (`createDataApiDb`)
 
 ## 4. `app/api`: handlers
 

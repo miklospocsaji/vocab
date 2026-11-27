@@ -177,6 +177,7 @@ export interface Db {
 
 **Migrations**
 - `src/migrations/index.ts` exports an ordered list of `{ id: "0001-…", sql }`. Each migration is a `.ts` module exporting its SQL as a string, so there are no files to bundle.
+- Each migration's `sql` is one statement, run by one `Db.query` call (found when built). PGlite's `query` takes a single statement, and the Data API documentation does not say whether `ExecuteStatement` accepts several. A feature that needs several statements ships several migrations, or the list's entries grow a list of statements in a later change.
 - This change ships the runner and an empty list. The first product migration comes with the first feature that needs a table.
 
 **The runner (`src/migrate.ts`)**
