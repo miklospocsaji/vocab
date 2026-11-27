@@ -17,7 +17,7 @@ export type Environment = (typeof environments)[EnvironmentName];
 
 // Filled in by the owner after the base stacks are first deployed (tasks 7.2 and 7.3).
 export const base = {
-  hostedZoneId: "",
+  hostedZoneId: "Z06520432FJKU0NDH0J3Z",
   cloudFrontCertificateArn: "",
 };
 
