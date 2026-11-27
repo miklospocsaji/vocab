@@ -47,6 +47,15 @@ function messageOf(f: () => unknown): string {
   return "";
 }
 
+function errorOf(f: () => unknown): (Error & { code?: string }) | undefined {
+  try {
+    f();
+  } catch (e) {
+    return e as Error & { code?: string };
+  }
+  return undefined;
+}
+
 describe("parseVocabDb", () => {
   it("Scenario: Full fixture parses to its known counts", () => {
     const r = parseVocabDb(join(fixtures, "vocab.db"));
@@ -112,6 +121,27 @@ describe("parseVocabDb", () => {
   it("Scenario: Missing table is rejected", () => {
     const p = build({ skip: "LOOKUPS", words: [word], books: [book] });
     expect(messageOf(() => parseVocabDb(p))).toMatch(/LOOKUPS/);
+  });
+
+  it("Scenario: Empty lookups table is rejected", () => {
+    const err = errorOf(() => parseVocabDb(build({})));
+    expect(err?.code).toBe("no-lookups");
+    expect(err?.message).toMatch(/no lookups/);
+  });
+
+  it("Scenario: Words and books without lookups are still rejected", () => {
+    const err = errorOf(() => parseVocabDb(build({ words: [word], books: [book] })));
+    expect(err?.code).toBe("no-lookups");
+    expect(err?.message).toMatch(/no lookups/);
+  });
+
+  it("Scenario: Missing table error takes precedence over no lookups", () => {
+    const err = errorOf(() => parseVocabDb(build({ skip: "LOOKUPS", words: [word], books: [book] })));
+    expect(err?.code).not.toBe("no-lookups");
+    expect(err?.message).toMatch(/LOOKUPS/);
+    expect(err?.message).not.toMatch(/no lookups/);
+    // the same tables with all present but empty give the no-lookups error
+    expect(errorOf(() => parseVocabDb(build({ words: [word], books: [book] })))?.code).toBe("no-lookups");
   });
 
   it("Scenario: Lists are sorted by id", () => {
