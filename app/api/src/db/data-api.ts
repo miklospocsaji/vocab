@@ -117,3 +117,16 @@ export function createDataApiDb(config: DataApiConfig, deps: DataApiDeps = {}): 
 
   return make(undefined);
 }
+
+/**
+ * The Data API config from a function's environment: `CLUSTER_ARN`, `DATABASE_SECRET_ARN`
+ * and `DATABASE_NAME`, which the app stack sets.
+ */
+export function dataApiConfigFromEnv(env: Record<string, string | undefined>): DataApiConfig {
+  const read = (name: string): string => {
+    const value = env[name];
+    if (value === undefined || value === "") throw new Error(`The environment variable ${name} is not set`);
+    return value;
+  };
+  return { resourceArn: read("CLUSTER_ARN"), secretArn: read("DATABASE_SECRET_ARN"), database: read("DATABASE_NAME") };
+}

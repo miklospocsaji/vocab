@@ -27,10 +27,10 @@ Built by hand (the owner or a local Claude Code session), in this order. Tests c
 
 ## 4. `app/api`: handlers
 
-- [ ] 4.1 Tests for `handlers/health.ts` with a `Db` stub: 200 with `{ status: "ok", database: "ok", commit }` when `SELECT 1` works; 503 with `database: "unavailable"` when it throws; both parse with `HealthResponse`
-- [ ] 4.2 `handlers/health.ts`: builds its `Db` from environment variables (cluster ARN, secret ARN, database, commit), once per container
-- [ ] 4.3 Tests for `handlers/migrate.ts` as a custom resource handler with a `Db` stub: `Create` and `Update` run the migrations, with `reset` from the `RESET_DATABASE` environment variable; `Delete` does nothing; a migration error fails the event
-- [ ] 4.4 `handlers/migrate.ts`
+- [x] 4.1 Tests for `handlers/health.ts` with a `Db` stub: 200 with `{ status: "ok", database: "ok", commit }` when `SELECT 1` works; 503 with `database: "unavailable"` when it throws; both parse with `HealthResponse`
+- [x] 4.2 `handlers/health.ts`: builds its `Db` from environment variables (cluster ARN, secret ARN, database, commit), once per container
+- [x] 4.3 Tests for `handlers/migrate.ts` as a custom resource handler with a `Db` stub: `Create` and `Update` run the migrations, with `reset` from the `RESET_DATABASE` environment variable; `Delete` does nothing; a migration error fails the event
+- [x] 4.4 `handlers/migrate.ts`
 
 ## 5. `app/web`
 
